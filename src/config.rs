@@ -5,6 +5,8 @@
 //! ```toml
 //! # Cover art: "auto" (when the terminal supports it, never inside tmux), "on", or "off".
 //! album_art = "auto"
+//! # When an album ends, continue with the next Discover release. Toggle with `a`.
+//! autoplay = true
 //! ```
 
 use std::path::Path;
@@ -23,10 +25,21 @@ pub enum AlbumArt {
     Off,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub album_art: AlbumArt,
+    /// Continue with the next Discover release when an album ends.
+    pub autoplay: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            album_art: AlbumArt::default(),
+            autoplay: true,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -95,6 +108,14 @@ mod tests {
             let path = write("parse", text);
             assert_eq!(Config::load(&path).unwrap().album_art, expected, "{text}");
         }
+    }
+
+    #[test]
+    fn autoplay_defaults_on_and_can_be_turned_off() {
+        let path = write("autoplay-default", "album_art = \"off\"\n");
+        assert!(Config::load(&path).unwrap().autoplay);
+        let path = write("autoplay-off", "autoplay = false\n");
+        assert!(!Config::load(&path).unwrap().autoplay);
     }
 
     #[test]

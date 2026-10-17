@@ -11,6 +11,7 @@ streaming full albums. No account or login needed.
 - Stream full albums (128 kbps MP3, the same quality as the website) with gapless track changes,
   in about 30 MB of memory and well under 1 % CPU
 - Album and artist info, tracklists, play from any track
+- Autoplay: when an album ends, the next Discover release starts (toggle with `a`)
 - Keyboard-driven, with vim and arrow keys; remembers your filters and volume
 - Cover art on terminals with kitty, iTerm2 or sixel graphics (text-only everywhere else)
 - Recovers by itself when Bandcamp's stream links expire (they're signed for about a day)
@@ -48,6 +49,7 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `n` / `p` | next / previous track |
 | `←` / `→` | seek 10 s |
 | `+` / `-` | volume |
+| `a` | autoplay on/off (continue with the next release when an album ends) |
 | `tab`, `h` / `l` | switch pane |
 | `i` | album about / credits / artist bio |
 | `o` | open the release on bandcamp.com (to buy it) |
@@ -68,6 +70,9 @@ Optional. `config.toml` lives in `~/Library/Application Support/bandcamp-tui/` o
 ```toml
 # Cover art: "auto" (default), "on" or "off". Same as --no-art when "off".
 album_art = "auto"
+# When an album ends, continue with the next Discover release (skipping pre-orders and
+# anything unplayable). Default true; `a` toggles it for the current session.
+autoplay = true
 ```
 
 ### Album art and tmux

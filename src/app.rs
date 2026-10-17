@@ -27,6 +27,8 @@ const ALBUM_CACHE_SIZE: usize = 64;
 const ART_CACHE_SIZE: usize = 16;
 const VOLUME_STEP: f32 = 0.05;
 const SEEK_STEP_MS: i64 = 10_000;
+/// Autoplay gives up after this many releases in a row that can't be played.
+const AUTOPLAY_MAX_SKIPS: u8 = 5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -46,6 +48,8 @@ pub enum Action {
     FocusAlbum,
     /// Album pane: switch between the tracklist and the about/credits/bio text.
     ToggleInfo,
+    /// Continue with the next Discover release when an album ends.
+    ToggleAutoplay,
     /// Open the selected release (or album pane's album) on bandcamp.com.
     OpenInBrowser,
     ShowHelp,
@@ -215,6 +219,15 @@ pub struct App {
     refetched_for_expiry: HashSet<ItemId>,
     /// Release the user asked to play while its details were still loading: (id, track).
     pending_play: Option<(ItemId, usize)>,
+    /// When an album ends, play the next Discover release. On by default; see `config.toml`.
+    pub autoplay: bool,
+    /// The release autoplay is currently loading, so a failure moves on instead of stopping.
+    autoplay_attempt: Option<ItemId>,
+    /// Consecutive releases autoplay had to skip.
+    autoplay_skips: u8,
+    /// Autoplay ran out of loaded releases and is waiting for the next page to continue after
+    /// this one.
+    autoplay_after: Option<ItemId>,
     /// The album the player's queue was built from.
     pub now_playing: Option<Arc<Album>>,
     pub player: Status,
@@ -245,6 +258,10 @@ impl App {
             album_errors: HashMap::new(),
             refetched_for_expiry: HashSet::new(),
             pending_play: None,
+            autoplay: true,
+            autoplay_attempt: None,
+            autoplay_skips: 0,
+            autoplay_after: None,
             now_playing: None,
             player: Status::default(),
             player_available,
@@ -348,13 +365,8 @@ impl App {
                 self.album_pane.info_scroll = 0;
                 vec![]
             }
-            Action::OpenInBrowser => match self.selected().map(|i| i.url.clone()) {
-                Some(url) => {
-                    self.info(format!("Opening {url}"));
-                    vec![Effect::OpenUrl(url)]
-                }
-                None => vec![],
-            },
+            Action::ToggleAutoplay => self.toggle_autoplay(),
+            Action::OpenInBrowser => self.open_in_browser(),
             Action::ShowHelp => {
                 self.show_help = true;
                 vec![]
@@ -460,6 +472,8 @@ impl App {
         self.focus = Focus::Discover;
         // Errors may have been transient; let them be retried.
         self.album_errors.clear();
+        // The list autoplay was walking is gone.
+        self.autoplay_after = None;
         Effect::FetchDiscover {
             query: self.query.clone(),
             cursor: None,
@@ -492,9 +506,13 @@ impl App {
                 // A tall terminal can show the whole first page: keep loading until the
                 // selection is far enough from the end (or there's nothing more).
                 effects.extend(self.maybe_load_more());
+                if let Some(after) = self.autoplay_after.take() {
+                    effects.extend(self.autoplay_next(Some(after)));
+                }
                 effects
             }
             Err(e) => {
+                self.autoplay_after = None;
                 self.error(format!("Couldn't load Discover: {e}"));
                 vec![]
             }
@@ -650,10 +668,27 @@ impl App {
 
     fn album_loaded(&mut self, id: ItemId, result: Result<Box<Album>, String>) -> Vec<Effect> {
         self.album_requests.remove(&id);
+        let from_autoplay = self.autoplay_attempt == Some(id);
+        if from_autoplay {
+            self.autoplay_attempt = None;
+            let playable = matches!(&result, Ok(album) if album.has_playable_tracks());
+            if !playable {
+                self.pending_play = None;
+                if let Err(e) = &result {
+                    self.album_errors.insert(id, e.clone());
+                } else if let Ok(album) = result {
+                    self.albums.insert(id, Arc::from(album));
+                }
+                return self.autoplay_skip(id);
+            }
+        }
         let pending = self.pending_play.filter(|(p, _)| *p == id);
         if pending.is_some() {
             self.pending_play = None;
-            self.message = None;
+            // Clear "Loading…", but keep autoplay's "Up next: …" visible.
+            if !from_autoplay {
+                self.message = None;
+            }
         }
         match result {
             Ok(album) => {
@@ -684,6 +719,7 @@ impl App {
         let Some(id) = self.selected().map(|i| i.id) else {
             return vec![];
         };
+        self.cancel_autoplay_attempt();
         self.play_or_fetch(id, None)
     }
 
@@ -695,6 +731,7 @@ impl App {
         let Some(index) = self.album_pane.tracks.selected() else {
             return vec![];
         };
+        self.cancel_autoplay_attempt();
         if let Some(track) = album.tracks.get(index)
             && !track.is_playable()
         {
@@ -765,7 +802,13 @@ impl App {
                     .map_or("track", |t| t.title.as_str());
                 self.error(format!("Couldn't play {title}: {message}"));
             }
-            Some(PlayerEvent::QueueEnded) => self.now_playing = None,
+            Some(PlayerEvent::QueueEnded) => {
+                let finished = self.now_playing.take().map(|a| a.id);
+                if self.autoplay {
+                    self.autoplay_skips = 0;
+                    return self.autoplay_next(finished);
+                }
+            }
             _ => {}
         }
         // Follow the playing track in the tracklist, unless the user is browsing it.
@@ -778,6 +821,112 @@ impl App {
             self.album_pane.tracks.select(Some(index));
         }
         vec![]
+    }
+
+    fn toggle_autoplay(&mut self) -> Vec<Effect> {
+        self.autoplay = !self.autoplay;
+        if !self.autoplay {
+            self.cancel_autoplay_attempt();
+        }
+        self.info(if self.autoplay {
+            "Autoplay on: the next Discover release plays when an album ends."
+        } else {
+            "Autoplay off: playback stops at the end of the album."
+        });
+        vec![]
+    }
+
+    fn open_in_browser(&mut self) -> Vec<Effect> {
+        let Some(url) = self.selected().map(|i| i.url.clone()) else {
+            return vec![];
+        };
+        self.info(format!("Opening {url}"));
+        vec![Effect::OpenUrl(url)]
+    }
+
+    // ---- Autoplay ------------------------------------------------------------------------------
+
+    /// The user chose something to play: forget what autoplay was about to start.
+    fn cancel_autoplay_attempt(&mut self) {
+        self.autoplay_attempt = None;
+        self.autoplay_after = None;
+    }
+
+    /// Plays the first playable Discover release after `after` (or from the selection if
+    /// `after` isn't in the list anymore). Loads more pages if needed.
+    fn autoplay_next(&mut self, after: Option<ItemId>) -> Vec<Effect> {
+        if !self.player_available {
+            return vec![];
+        }
+        let start = after
+            .and_then(|id| self.discover.items.iter().position(|i| i.id == id))
+            .map_or_else(|| self.table.selected().unwrap_or(0), |i| i + 1);
+        let candidate = self
+            .discover
+            .items
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find(|(_, item)| !item.is_preorder && Some(item.id) != after)
+            .map(|(index, item)| (index, item.id, item.title.clone(), item.artist.clone()));
+
+        let Some((index, id, title, artist)) = candidate else {
+            if self.discover.has_more() && !self.discover.loading {
+                // Wait for the next page, then continue from the last loaded release.
+                self.autoplay_after = self.discover.items.last().map(|i| i.id).or(after);
+                return self.load_next_page().into_iter().collect();
+            }
+            if self.discover.loading {
+                self.autoplay_after = self.discover.items.last().map(|i| i.id).or(after);
+                return vec![];
+            }
+            self.info("Autoplay: that was the last release in Discover.");
+            return vec![];
+        };
+
+        let mut effects = Vec::new();
+        // Follow along in the list, unless the user has moved off the album that just ended.
+        if after.is_none() || self.selected().map(|i| i.id) == after {
+            self.table.select(Some(index));
+            effects.extend(self.selection_changed());
+            effects.extend(self.maybe_load_more());
+        }
+
+        if let Some(album) = self.albums.get(id) {
+            if !album.has_playable_tracks() {
+                effects.extend(self.autoplay_skip(id));
+                return effects;
+            }
+            effects.extend(self.play_album(&album, 0));
+        } else {
+            self.autoplay_attempt = Some(id);
+            effects.extend(self.play_or_fetch(id, None));
+        }
+        self.info(format!("Up next: {title} — {artist}"));
+        effects
+    }
+
+    fn autoplay_skip(&mut self, id: ItemId) -> Vec<Effect> {
+        self.autoplay_skips += 1;
+        if self.autoplay_skips >= AUTOPLAY_MAX_SKIPS {
+            self.error("Autoplay stopped: the next few releases couldn't be played.");
+            return vec![];
+        }
+        tracing::info!(%id, "autoplay: skipping unplayable release");
+        self.autoplay_next(Some(id))
+    }
+
+    /// Requests the next discover page regardless of where the selection is.
+    fn load_next_page(&mut self) -> Option<Effect> {
+        if self.discover.loading || !self.discover.has_more() {
+            return None;
+        }
+        self.discover.loading = true;
+        Some(Effect::FetchDiscover {
+            query: self.query.clone(),
+            cursor: self.discover.next_cursor.clone(),
+            generation: self.discover.generation,
+        })
     }
 
     /// Stream URLs are signed for about a day; re-fetch the album for fresh ones and resume at
@@ -1379,6 +1528,195 @@ mod tests {
         assert_eq!(app.art_for(Some(art_id)), None);
         assert!(app.fetch_art(Some(art_id)).is_none());
         assert_eq!(app.art_for(None), None, "releases without art have none");
+    }
+
+    /// Plays the first release (Ocean Company) and lets it finish.
+    fn finish_first_album(app: &mut App) -> Vec<Effect> {
+        app.update(Action::Play);
+        assert_eq!(app.now_playing.as_ref().unwrap().title, "Ocean Company");
+        app.update(Action::Player {
+            event: Some(PlayerEvent::QueueEnded),
+            status: Status::default(),
+        })
+    }
+
+    fn fetched_album(effects: &[Effect]) -> Option<ItemId> {
+        effects.iter().find_map(|e| match e {
+            Effect::FetchAlbum { id, .. } => Some(*id),
+            _ => None,
+        })
+    }
+
+    /// A page of new releases: the fixture with fresh ids.
+    fn more_releases(offset: u64) -> DiscoverPage {
+        let mut page = page_fixture();
+        for item in &mut page.items {
+            item.id = ItemId(item.id.0 + offset);
+        }
+        page
+    }
+
+    #[test]
+    fn autoplay_continues_with_the_next_release_and_follows_in_the_list() {
+        let mut app = with_album();
+        let next = app.discover.items[1].id;
+        let effects = finish_first_album(&mut app);
+        assert_eq!(fetched_album(&effects), Some(next), "{effects:?}");
+        assert_eq!(app.table.selected(), Some(1), "selection follows");
+        assert!(
+            app.message
+                .as_ref()
+                .unwrap()
+                .text
+                .starts_with("Up next: Pete Cannon")
+        );
+
+        let effects = app.update(Action::AlbumLoaded {
+            id: next,
+            result: Ok(album_fixture("album")),
+        });
+        assert!(
+            matches!(
+                &effects[..],
+                [Effect::Player(PlayerCommand::PlayQueue(_, 0))]
+            ),
+            "{effects:?}"
+        );
+        assert!(
+            app.message.as_ref().unwrap().text.starts_with("Up next"),
+            "message kept"
+        );
+    }
+
+    #[test]
+    fn autoplay_skips_preorders_and_unplayable_releases() {
+        let mut app = with_album();
+        app.discover.items[1].is_preorder = true;
+        let (third, fourth) = (app.discover.items[2].id, app.discover.items[3].id);
+        let effects = finish_first_album(&mut app);
+        assert_eq!(fetched_album(&effects), Some(third), "pre-order skipped");
+
+        // The third has nothing streamable: move on to the fourth.
+        let effects = app.update(Action::AlbumLoaded {
+            id: third,
+            result: Ok(album_fixture("preorder")),
+        });
+        assert_eq!(fetched_album(&effects), Some(fourth), "{effects:?}");
+        assert_ne!(app.message.as_ref().unwrap().kind, MessageKind::Error);
+    }
+
+    #[test]
+    fn autoplay_does_not_move_the_selection_while_browsing() {
+        let mut app = with_album();
+        app.update(Action::Play);
+        app.update(Action::Bottom);
+        let browsing = app.table.selected();
+        let effects = app.update(Action::Player {
+            event: Some(PlayerEvent::QueueEnded),
+            status: Status::default(),
+        });
+        assert_eq!(fetched_album(&effects), Some(app.discover.items[1].id));
+        assert_eq!(app.table.selected(), browsing);
+    }
+
+    #[test]
+    fn autoplay_loads_the_next_page_at_the_end_of_the_list() {
+        let mut app = with_album();
+        let generation = app.discover.generation;
+        // Finish the last loaded release while the next page is still on its way.
+        app.update(Action::Bottom);
+        let last = app.selected().unwrap().id;
+        app.update(Action::AlbumDue(last));
+        let mut album = album_fixture("album");
+        album.id = last; // details of the release we asked for
+        app.update(Action::AlbumLoaded {
+            id: last,
+            result: Ok(album),
+        });
+        app.update(Action::Play);
+        let effects = app.update(Action::Player {
+            event: Some(PlayerEvent::QueueEnded),
+            status: Status::default(),
+        });
+        assert_eq!(fetched_album(&effects), None, "nothing after it yet");
+
+        let effects = app.update(Action::DiscoverLoaded {
+            generation,
+            result: Ok(more_releases(1)),
+        });
+        assert_eq!(
+            fetched_album(&effects),
+            Some(app.discover.items[4].id),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn autoplay_gives_up_after_repeated_failures() {
+        let mut app = with_album();
+        let generation = app.discover.generation;
+        for offset in [1, 2] {
+            app.update(Action::DiscoverLoaded {
+                generation,
+                result: Ok(more_releases(offset)),
+            });
+        }
+        let mut effects = finish_first_album(&mut app);
+        let mut attempts = 0;
+        while let Some(id) = fetched_album(&effects) {
+            attempts += 1;
+            effects = app.update(Action::AlbumLoaded {
+                id,
+                result: Err("HTTP 500".into()),
+            });
+        }
+        assert_eq!(attempts, 5);
+        assert_eq!(app.message.as_ref().unwrap().kind, MessageKind::Error);
+        assert!(
+            app.message
+                .as_ref()
+                .unwrap()
+                .text
+                .contains("Autoplay stopped")
+        );
+    }
+
+    #[test]
+    fn autoplay_off_stops_at_the_end_and_can_be_toggled() {
+        let mut app = with_album();
+        app.update(Action::ToggleAutoplay);
+        assert!(!app.autoplay);
+        assert!(
+            app.message
+                .as_ref()
+                .unwrap()
+                .text
+                .starts_with("Autoplay off")
+        );
+        assert_eq!(fetched_album(&finish_first_album(&mut app)), None);
+        assert!(app.now_playing.is_none());
+
+        app.update(Action::ToggleAutoplay);
+        assert!(app.autoplay);
+    }
+
+    #[test]
+    fn choosing_something_else_cancels_autoplay() {
+        let mut app = with_album();
+        let next = app.discover.items[1].id;
+        finish_first_album(&mut app);
+        // While the next release loads, the user picks the third one themselves.
+        app.update(Action::Down);
+        app.update(Action::Play);
+        let effects = app.update(Action::AlbumLoaded {
+            id: next,
+            result: Err("HTTP 500".into()),
+        });
+        assert_eq!(
+            effects,
+            [],
+            "a cancelled autoplay attempt doesn't skip onwards"
+        );
     }
 
     #[test]

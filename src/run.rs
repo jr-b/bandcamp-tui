@@ -30,6 +30,8 @@ pub struct Services {
     pub initial_volume: f32,
     /// Set if the terminal shows cover art (see [`crate::art::detect`]).
     pub art: Option<ratatui_image::picker::Picker>,
+    /// Start with autoplay on (from `config.toml`).
+    pub autoplay: bool,
 }
 
 impl std::fmt::Debug for Services {
@@ -52,11 +54,13 @@ pub async fn run(
         settings_path,
         initial_volume,
         art,
+        autoplay,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
     let (mut app, effects) = App::new(query, player.is_some());
     app.player.volume = initial_volume;
     app.art_enabled = art.is_some();
+    app.autoplay = autoplay;
     let executor = Executor {
         client,
         player: player.clone(),

@@ -20,6 +20,7 @@ pub const HINTS: &[(&str, &str)] = &[
     ("t", "time"),
     ("L", "place"),
     ("i", "info"),
+    ("a", "autoplay"),
     ("s", "sort"),
     ("r", "refresh"),
     ("↑↓", "move"),
@@ -55,6 +56,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("n p", "next / previous track"),
             ("← →  , .", "seek 10 s"),
             ("+ -", "volume"),
+            ("a", "autoplay: continue with the next release"),
         ],
     ),
     (
@@ -123,6 +125,7 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Char('t') => Action::OpenPicker(PickerKind::Time),
         KeyCode::Char('L') => Action::OpenPicker(PickerKind::Location),
         KeyCode::Char('o') => Action::OpenInBrowser,
+        KeyCode::Char('a') => Action::ToggleAutoplay,
         KeyCode::Char('?') => Action::ShowHelp,
         _ => return None,
     };

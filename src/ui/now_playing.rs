@@ -12,9 +12,15 @@ use crate::format;
 use crate::player::PlaybackState;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
+    let autoplay = if app.autoplay {
+        Line::from(" autoplay on ").fg(ACCENT).right_aligned()
+    } else {
+        Line::from(" autoplay off ").dim().right_aligned()
+    };
     let block = Block::new()
         .borders(Borders::TOP)
         .title(" Now playing ")
+        .title(autoplay)
         .border_style(Style::new().dim());
     let inner = block.inner(area);
     frame.render_widget(block, area);
