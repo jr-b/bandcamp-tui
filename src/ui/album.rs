@@ -9,8 +9,12 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{ACCENT, pane};
 use crate::app::{AlbumView, App, Focus};
+use crate::art::{ART_COLS, ART_ROWS, Art};
 use crate::bandcamp::{Album, DiscoverItem};
 use crate::format;
+
+/// Show the cover only if the text beside it still gets this many columns.
+const MIN_TEXT_BESIDE_ART: u16 = 28;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Album;
@@ -26,10 +30,18 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     match app.album_view() {
         AlbumView::None => {}
         AlbumView::Loading(item) => {
-            let mut text = summary_from_item(item, inner.width);
+            let art = art_slot(app, item.art_id, inner);
+            let text_width = if art.is_some() {
+                inner.width.saturating_sub(ART_COLS + 1)
+            } else {
+                inner.width
+            };
+            let mut text = summary_from_item(item, text_width);
             text.push_line(Line::default());
             text.push_line(Line::from("Loading tracks…").dim());
-            frame.render_widget(Paragraph::new(text), inner);
+            let lines = u16::try_from(text.lines.len()).unwrap_or(u16::MAX);
+            let (text_area, _) = header_with_art(frame, inner, art, lines);
+            frame.render_widget(Paragraph::new(text), text_area);
         }
         AlbumView::Failed(item, error) => {
             let mut text = summary_from_item(item, inner.width);
@@ -148,16 +160,68 @@ fn fit(line: Line<'static>, width: usize) -> Line<'static> {
     Line::from(spans).style(line.style)
 }
 
-fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focused: bool) {
-    let header = summary(album, area.width);
-    let header_height = u16::try_from(header.lines.len()).unwrap_or(0) + 1;
-    let [top, rule, list] = Layout::vertical([
-        Constraint::Length(header_height - 1),
+/// Where (and whether) to draw the cover: `None` for text-only.
+type ArtSlot<'a> = Option<Option<&'a Art>>;
+
+fn art_slot(app: &App, id: Option<crate::bandcamp::ArtId>, area: Rect) -> ArtSlot<'_> {
+    if area.width < ART_COLS + 1 + MIN_TEXT_BESIDE_ART || area.height < ART_ROWS + 4 {
+        return None;
+    }
+    app.art_for(id)
+}
+
+/// Lays out the header: cover on the left (or a placeholder while it loads), text on the
+/// right. Returns the text area and the area below the header.
+fn header_with_art(
+    frame: &mut Frame,
+    area: Rect,
+    art: ArtSlot<'_>,
+    text_lines: u16,
+) -> (Rect, Rect) {
+    let Some(art) = art else {
+        let [text, rest] =
+            Layout::vertical([Constraint::Length(text_lines), Constraint::Min(0)]).areas(area);
+        return (text, rest);
+    };
+    let height = text_lines.max(ART_ROWS);
+    let [top, rest] =
+        Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(area);
+    let [cover, _, text] = Layout::horizontal([
+        Constraint::Length(ART_COLS),
         Constraint::Length(1),
         Constraint::Min(0),
     ])
-    .areas(area);
-    frame.render_widget(Paragraph::new(header), top);
+    .areas(top);
+    let cover = Rect {
+        height: ART_ROWS,
+        ..cover
+    };
+    if let Some(art) = art {
+        frame.render_widget(ratatui_image::Image::new(art.protocol()), cover);
+    } else {
+        // Loading: a quiet placeholder of the same size, so nothing jumps when it arrives.
+        let middle = Rect {
+            y: cover.y + cover.height / 2,
+            height: 1,
+            ..cover
+        };
+        frame.render_widget(Line::from("♪").dim().centered(), middle);
+    }
+    (text, rest)
+}
+
+fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focused: bool) {
+    let art = art_slot(app, album.art_id, area);
+    let text_width = if art.is_some() {
+        area.width.saturating_sub(ART_COLS + 1)
+    } else {
+        area.width
+    };
+    let header = summary(album, text_width);
+    let lines = u16::try_from(header.lines.len()).unwrap_or(0);
+    let (text_area, rest) = header_with_art(frame, area, art, lines);
+    frame.render_widget(Paragraph::new(header), text_area);
+    let [rule, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(rest);
     frame.render_widget(Line::from("─".repeat(usize::from(rule.width))).dim(), rule);
     app.album_pane.page_rows = usize::from(list.height);
 

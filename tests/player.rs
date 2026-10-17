@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use bandcamp_tui::player::{
     HttpSource, Output, PlaybackState, PlayerConfig, PlayerEvent, PlayerHandle, QueueTrack,
-    StreamConfig,
+    StreamConfig, UrlRefresher,
 };
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -95,6 +95,7 @@ impl Cdn {
             reqwest::Client::new(),
             url,
             config,
+            None,
             |_| {},
         )
     }
@@ -184,6 +185,60 @@ fn expired_url_fails_with_permission_denied() {
 }
 
 #[test]
+fn expired_url_is_refreshed_and_the_download_continues() {
+    let cdn = Cdn::start();
+    let expired = cdn.serve("/expired.mp3", ResponseTemplate::new(403));
+    let fresh = cdn.serve("/fresh.mp3", RangeFile::new(TONE));
+    let asked = Arc::new(Mutex::new(Vec::new()));
+    let refresher: UrlRefresher = {
+        let asked = Arc::clone(&asked);
+        Arc::new(move |url: Url| {
+            asked.lock().unwrap().push(url);
+            let fresh = fresh.clone();
+            Box::pin(async move { Some(fresh) })
+        })
+    };
+    let mut source = HttpSource::open(
+        cdn.rt.handle(),
+        reqwest::Client::new(),
+        expired.clone(),
+        SMALL,
+        Some(refresher),
+        |_| {},
+    )
+    .unwrap();
+    let mut buf = [0u8; 100];
+    source.read_exact(&mut buf).unwrap();
+    assert_eq!(buf, TONE[..100]);
+    assert_eq!(*asked.lock().unwrap(), [expired]);
+}
+
+#[test]
+fn a_refresher_that_cannot_help_fails_once() {
+    let cdn = Cdn::start();
+    let expired = cdn.serve("/expired.mp3", ResponseTemplate::new(410));
+    let calls = Arc::new(Mutex::new(0));
+    let refresher: UrlRefresher = {
+        let calls = Arc::clone(&calls);
+        Arc::new(move |_| {
+            *calls.lock().unwrap() += 1;
+            Box::pin(async { None })
+        })
+    };
+    let err = HttpSource::open(
+        cdn.rt.handle(),
+        reqwest::Client::new(),
+        expired,
+        SMALL,
+        Some(refresher),
+        |_| {},
+    )
+    .unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(*calls.lock().unwrap(), 1);
+}
+
+#[test]
 fn retries_after_a_server_error() {
     let cdn = Cdn::start();
     cdn.rt.block_on(
@@ -213,6 +268,7 @@ fn closer_aborts_a_stalled_open() {
         reqwest::Client::new(),
         url,
         SMALL,
+        None,
         |closer| {
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(100));
@@ -294,6 +350,7 @@ impl Harness {
             reqwest::Client::new(),
             Output::Mixer(mixer),
             config,
+            None,
             tx,
         )
         .unwrap();
@@ -400,6 +457,39 @@ fn skips_unplayable_and_failing_tracks() {
             .iter()
             .any(|e| matches!(e, PlayerEvent::TrackFailed { index: 1, .. })),
         "{events:?}"
+    );
+}
+
+#[test]
+fn expired_track_stops_the_queue_instead_of_skipping() {
+    let mut h = Harness::new(20);
+    let expired = QueueTrack {
+        url: Some(h.cdn.serve("/old.mp3", ResponseTemplate::new(403))),
+        duration: TONE_DURATION,
+    };
+    let next = h.track("/next.mp3", RangeFile::new(TONE));
+    h.player.play_queue(vec![expired, next], 0);
+
+    let events = h.wait_for("TrackFailed", |e| {
+        matches!(e, PlayerEvent::TrackFailed { .. })
+    });
+    assert!(
+        matches!(
+            events.last(),
+            Some(PlayerEvent::TrackFailed {
+                index: 0,
+                expired: true,
+                ..
+            })
+        ),
+        "{events:?}"
+    );
+    thread::sleep(Duration::from_millis(300));
+    assert_eq!(h.player.status().state, PlaybackState::Stopped);
+    assert!(
+        !std::iter::from_fn(|| h.events.try_recv().ok())
+            .any(|e| e == PlayerEvent::TrackChanged(Some(1))),
+        "should not have moved on to track 1"
     );
 }
 

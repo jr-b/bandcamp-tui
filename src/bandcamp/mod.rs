@@ -37,6 +37,7 @@ const API_TIMEOUT: Duration = Duration::from_secs(20);
 
 const DISCOVER: &str = "discover_web";
 const TRALBUM_DETAILS: &str = "tralbum_details";
+const STREAM_REFRESH: &str = "stream refresh";
 
 /// Bandcamp API client. Cheap to clone: clones share one connection pool.
 #[derive(Debug, Clone)]
@@ -106,6 +107,23 @@ impl BandcampClient {
             ]);
         let response: album::Response = self.send(TRALBUM_DETAILS, request).await?;
         Ok(response.into())
+    }
+
+    /// Gets a fresh signed URL for an expired CDN stream URL (`…bcbits.com/stream/…`).
+    ///
+    /// Only accepts CDN URLs as served after the `stream_redirect` hop; Bandcamp answers
+    /// "invalid url" for redirect URLs and for URLs whose signature doesn't verify.
+    pub async fn refresh_stream_url(&self, url: &Url) -> Result<Url> {
+        #[derive(Deserialize)]
+        struct Refreshed {
+            url: Url,
+        }
+        let request = self
+            .http
+            .get(self.endpoint("api/stream/1/refresh"))
+            .query(&[("url", url.as_str())]);
+        let refreshed: Refreshed = self.send(STREAM_REFRESH, request).await?;
+        Ok(refreshed.url)
     }
 
     fn endpoint(&self, path: &str) -> Url {

@@ -4,7 +4,9 @@
 //! into the TUI.
 
 pub mod app;
+pub mod art;
 pub mod bandcamp;
+pub mod config;
 pub mod format;
 pub mod fuzzy;
 pub mod input;

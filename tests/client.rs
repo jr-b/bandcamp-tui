@@ -194,3 +194,41 @@ async fn connection_refused_becomes_error_request() {
         .unwrap_err();
     assert!(matches!(&err, Error::Request { .. }), "{err:?}");
 }
+
+#[tokio::test]
+async fn refresh_stream_url_returns_the_new_url() {
+    let server = MockServer::start().await;
+    let old = "https://t4.bcbits.com/stream/abc/mp3-128/1?p=0&ts=1&t=x&token=1_y";
+    Mock::given(method("GET"))
+        .and(path("/api/stream/1/refresh"))
+        .and(query_param("url", old))
+        .respond_with(json_response(
+            r#"{"track_id":1,"url":"https://t4.bcbits.com/stream/abc/mp3-128/1?p=0&ts=2&t=z&token=2_w"}"#
+                .into(),
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/stream/1/refresh"))
+        .respond_with(json_response(
+            r#"{"error":true,"error_message":"invalid url"}"#.into(),
+        ))
+        .mount(&server)
+        .await;
+    let client = client_for(&server);
+
+    let fresh = client
+        .refresh_stream_url(&old.parse().unwrap())
+        .await
+        .unwrap();
+    assert!(fresh.as_str().contains("ts=2"), "{fresh}");
+
+    let err = client
+        .refresh_stream_url(&"https://bandcamp.com/stream_redirect?x".parse().unwrap())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Api { message, .. } if message == "invalid url"),
+        "{err:?}"
+    );
+}

@@ -89,3 +89,42 @@ async fn stream_url_serves_mp3() {
         "audio/mpeg"
     );
 }
+
+#[tokio::test]
+#[ignore = "hits bandcamp.com"]
+async fn refreshes_a_cdn_stream_url() {
+    let client = BandcampClient::new().unwrap();
+    let page = client
+        .discover(
+            &DiscoverQuery {
+                page_size: 10,
+                ..DiscoverQuery::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let item = page.items.iter().find(|i| !i.is_preorder).unwrap();
+    let album = client
+        .album(item.band_id, item.id, item.kind)
+        .await
+        .unwrap();
+    let redirect = album
+        .tracks
+        .iter()
+        .find_map(|t| t.stream_url.clone())
+        .unwrap();
+    // Resolve the redirect without downloading the audio.
+    let cdn = client
+        .http()
+        .get(redirect)
+        .header("range", "bytes=0-0")
+        .send()
+        .await
+        .unwrap()
+        .url()
+        .clone();
+    assert!(cdn.path().starts_with("/stream/"), "{cdn}");
+    let fresh = client.refresh_stream_url(&cdn).await.unwrap();
+    assert_eq!(fresh.path(), cdn.path());
+}

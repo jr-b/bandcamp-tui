@@ -18,7 +18,9 @@ color-eyre = "0.6.5"
 crossterm = { version = "0.29", features = ["event-stream"] }
 directories = "6.0.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "unstable-rendered-line-info"] }
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "gzip", "rustls", "http2", "query"] }
 rodio = { version = "0.23", default-features = false, features = ["playback"] }
 rtrb = "0.4.0"

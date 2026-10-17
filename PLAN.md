@@ -134,7 +134,8 @@ src/
   picker.rs          # filter popup model (genre/time/location), tag normalisation
   fuzzy.rs           # tiny fuzzy matcher (prefix > word > substring > subsequence)
   settings.rs        # state.toml: last filters + volume, atomic writes
-  config.rs          # (M7) optional user config: album_art
+  config.rs          # optional user config.toml (album_art), strict parsing
+  art.rs             # cover art: terminal detection, JPEG → kitty/iTerm2/sixel encoding
 tests/
   client.rs, player.rs, live.rs, fixtures/
 examples/
@@ -356,9 +357,29 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
 5. ✅ **Album pane.** Metadata, tracklist, play album/track, auto-advance, prefetch, greyed-out
    unstreamable tracks.
 6. ✅ **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
-7. **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
+7. ✅ **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
    expiry, `o` to open in browser, and media keys / MPRIS (stretch, behind a `mpris` feature on Linux).
 8. **Stretch.** Search, play queue across albums, and a "radio" mode that auto-plays the next discover album.
+
+### Polish (milestone 7)
+
+* **Stream link expiry.** Two layers. Mid-track (e.g. after a pause of more than a day), the
+  stream holds a resolved CDN URL. On 403/410 it asks `/api/stream/1/refresh` (which only
+  accepts genuine CDN URLs) and resumes at the same byte. When a track *starts* from an expired
+  `stream_redirect` URL (404, but its own `ts` is in the past, which is how it's told apart from
+  a missing file), the player stops instead of failing through the album. The app re-fetches
+  the album and resumes at that track, once per album until playback works again.
+* **Cover art** (see the album-art section above): detection after entering the alternate screen;
+  `auto`, `on` or `off`; never in tmux under `auto`; never half-blocks. Covers are fetched at
+  150 px only for the selected release, decoded and encoded off the UI thread, and cached as
+  encoded protocol data (16 entries). A placeholder of the same size shows while loading, so
+  the layout doesn't jump. Covers are hidden when the pane is too narrow. When disabled, nothing
+  is fetched or allocated.
+* `?` help overlay generated from one table of bindings, and a test keeps it in sync with the
+  footer hints. `o` opens the release with `open` / `xdg-open` / `start`.
+* `config.toml` (hand-edited, strict: unknown keys and bad values stop startup with the line and
+  column) is kept separate from `state.toml` (app-written, lenient).
+* Not done (stretch): MPRIS/media keys, search, cross-album queue, radio mode.
 
 ## 6. Best practices checklist
 

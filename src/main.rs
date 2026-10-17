@@ -2,9 +2,11 @@
 
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use bandcamp_tui::bandcamp::{BandcampClient, Slice};
-use bandcamp_tui::player::{Output, PlayerConfig, PlayerHandle};
+use bandcamp_tui::config::{AlbumArt, Config};
+use bandcamp_tui::player::{Output, PlayerConfig, PlayerHandle, UrlRefresher};
 use bandcamp_tui::run::{Services, run};
 use bandcamp_tui::settings::Settings;
 use clap::{Parser, ValueEnum};
@@ -27,6 +29,15 @@ struct Cli {
     /// Start with default filters and volume instead of the remembered ones.
     #[arg(long)]
     fresh: bool,
+
+    /// Never show cover art (same as `album_art = "off"` in the config).
+    #[arg(long)]
+    no_art: bool,
+
+    /// Config file. Defaults to `config.toml` in the platform config directory
+    /// (`~/Library/Application Support/bandcamp-tui` on macOS, `~/.config/bandcamp-tui` on Linux).
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
 
     /// Log file. Defaults to `bandcamp-tui.log` in the platform data directory
     /// (`~/Library/Application Support/bandcamp-tui` on macOS, `~/.local/share/bandcamp-tui` on Linux).
@@ -57,9 +68,20 @@ impl From<SliceArg> for Slice {
 fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
-    let data_dir = directories::ProjectDirs::from("", "", "bandcamp-tui")
-        .map(|dirs| dirs.data_local_dir().to_path_buf());
+    let dirs = directories::ProjectDirs::from("", "", "bandcamp-tui");
+    let data_dir = dirs.as_ref().map(|d| d.data_local_dir().to_path_buf());
     init_logging(cli.log_file, data_dir.as_deref())?;
+
+    let config_path = cli
+        .config
+        .or_else(|| dirs.as_ref().map(|d| d.config_dir().join("config.toml")));
+    let mut config = match &config_path {
+        Some(path) => Config::load(path)?,
+        None => Config::default(),
+    };
+    if cli.no_art {
+        config.album_art = AlbumArt::Off;
+    }
 
     let settings_path = data_dir.map(|dir| dir.join("state.toml"));
     let settings = match &settings_path {
@@ -82,12 +104,29 @@ fn main() -> Result<()> {
         .wrap_err("starting async runtime")?;
     let client = BandcampClient::new().wrap_err("creating HTTP client")?;
 
+    let refresher: UrlRefresher = {
+        let client = client.clone();
+        Arc::new(move |url| {
+            let client = client.clone();
+            Box::pin(async move {
+                client
+                    .refresh_stream_url(&url)
+                    .await
+                    .inspect_err(|e| {
+                        let error = bandcamp_tui::format::error_chain(e);
+                        tracing::warn!(%error, "couldn't refresh stream URL");
+                    })
+                    .ok()
+            })
+        })
+    };
     let (player_tx, player_events) = tokio::sync::mpsc::unbounded_channel();
     let player = match PlayerHandle::spawn(
         runtime.handle().clone(),
         client.http().clone(),
         Output::DefaultDevice,
         PlayerConfig::default(),
+        Some(refresher),
         player_tx,
     ) {
         Ok(player) => {
@@ -100,16 +139,18 @@ fn main() -> Result<()> {
         }
     };
 
+    // Installs a panic hook that restores the terminal before the color-eyre report prints.
+    let mut terminal = ratatui::init();
+    // Must run in the alternate screen and before input is read: it asks the terminal.
+    let art = bandcamp_tui::art::detect(config.album_art);
     let services = Services {
         client,
         player,
         player_events,
         settings_path,
         initial_volume: settings.volume,
+        art,
     };
-
-    // Installs a panic hook that restores the terminal before the color-eyre report prints.
-    let mut terminal = ratatui::init();
     let result = runtime.block_on(run(&mut terminal, services, query));
     ratatui::restore();
     result.wrap_err("terminal I/O failed")

@@ -28,6 +28,8 @@ pub struct Services {
     /// Where to remember filters and volume; `None` disables saving.
     pub settings_path: Option<std::path::PathBuf>,
     pub initial_volume: f32,
+    /// Set if the terminal shows cover art (see [`crate::art::detect`]).
+    pub art: Option<ratatui_image::picker::Picker>,
 }
 
 impl std::fmt::Debug for Services {
@@ -49,15 +51,18 @@ pub async fn run(
         mut player_events,
         settings_path,
         initial_volume,
+        art,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
     let (mut app, effects) = App::new(query, player.is_some());
     app.player.volume = initial_volume;
+    app.art_enabled = art.is_some();
     let executor = Executor {
         client,
         player: player.clone(),
         results: results_tx,
         settings_path,
+        art: art.map(std::sync::Arc::new),
     };
     // At most one pending debounced album load: (when, which).
     let mut album_due: Option<(Instant, crate::bandcamp::ItemId)> = None;
@@ -75,7 +80,16 @@ pub async fn run(
         }
         let action = tokio::select! {
             event = input.next() => match event {
-                Some(Ok(Event::Key(key))) => input::action_for(key, app.picker.is_some()),
+                Some(Ok(Event::Key(key))) => {
+                    let mode = if app.show_help {
+                        input::Mode::Help
+                    } else if app.picker.is_some() {
+                        input::Mode::Picker
+                    } else {
+                        input::Mode::Normal
+                    };
+                    input::action_for(key, mode)
+                }
                 Some(Ok(Event::Resize(..))) => Some(Action::Resize),
                 Some(Ok(_)) => None,
                 Some(Err(e)) => return Err(e),
@@ -132,6 +146,7 @@ struct Executor {
     player: Option<PlayerHandle>,
     results: UnboundedSender<Action>,
     settings_path: Option<std::path::PathBuf>,
+    art: Option<std::sync::Arc<ratatui_image::picker::Picker>>,
 }
 
 impl Executor {
@@ -178,6 +193,18 @@ impl Executor {
                         apply(player, command);
                     }
                 }
+                Effect::FetchArt(id) => {
+                    let Some(picker) = self.art.clone() else {
+                        continue;
+                    };
+                    let http = self.client.http().clone();
+                    let tx = self.results.clone();
+                    tokio::spawn(async move {
+                        let result = fetch_art(&http, picker, id).await;
+                        let _ = tx.send(Action::ArtLoaded { id, result });
+                    });
+                }
+                Effect::OpenUrl(url) => open_url(&url),
                 Effect::SaveSettings(settings) => {
                     // Synchronous on purpose: the file is ~200 bytes, and writing in order
                     // guarantees the last change wins.
@@ -189,6 +216,54 @@ impl Executor {
                 }
             }
         }
+    }
+}
+
+/// Downloads a cover and encodes it for the terminal off the async threads.
+async fn fetch_art(
+    http: &reqwest::Client,
+    picker: std::sync::Arc<ratatui_image::picker::Picker>,
+    id: crate::bandcamp::ArtId,
+) -> Result<crate::art::Art, String> {
+    use crate::bandcamp::images::{ImageSize, art_url};
+    let response = http
+        .get(art_url(id, ImageSize::Px150))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| error_chain(&e))?;
+    let bytes = response.bytes().await.map_err(|e| error_chain(&e))?;
+    tokio::task::spawn_blocking(move || crate::art::encode(&picker, &bytes))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Opens `url` in the default browser without blocking or touching the terminal.
+fn open_url(url: &url::Url) {
+    use std::process::{Command, Stdio};
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let mut command = Command::new("xdg-open");
+    let spawned = command
+        .arg(url.as_str())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match spawned {
+        // Reap it in the background so it doesn't linger as a zombie.
+        Ok(mut child) => {
+            std::thread::spawn(move || child.wait());
+        }
+        Err(e) => tracing::warn!(%url, error = %e, "couldn't open browser"),
     }
 }
 

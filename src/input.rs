@@ -12,6 +12,7 @@ pub const HINTS: &[(&str, &str)] = &[
     ("space", "pause"),
     ("tab", "pane"),
     ("q", "quit"),
+    ("?", "help"),
     ("n/p", "track"),
     ("←→", "seek"),
     ("+/-", "volume"),
@@ -33,17 +34,66 @@ pub const PICKER_HINTS: &[(&str, &str)] = &[
     ("ctrl-u", "clear"),
 ];
 
-/// Maps a key to an action. `picker_open` switches to text-entry bindings.
+/// Every binding, grouped, for the `?` help overlay.
+pub const HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Browse",
+        &[
+            ("↑↓  j k", "move"),
+            ("g G  Home End", "top / bottom"),
+            ("PgUp PgDn  ^u ^d", "page"),
+            ("tab  h l", "switch pane"),
+            ("i", "album about / credits / artist"),
+            ("o", "open on bandcamp.com"),
+        ],
+    ),
+    (
+        "Play",
+        &[
+            ("⏎", "play album / play from track"),
+            ("space", "pause / resume"),
+            ("n p", "next / previous track"),
+            ("← →  , .", "seek 10 s"),
+            ("+ -", "volume"),
+        ],
+    ),
+    (
+        "Discover",
+        &[
+            ("f", "genre or any tag"),
+            ("t", "release time"),
+            ("L", "location"),
+            ("s", "best-selling / new / surprise me"),
+            ("r", "refresh"),
+        ],
+    ),
+    ("App", &[("?", "this help"), ("q  ^c", "quit")]),
+];
+
+/// Which bindings apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Normal,
+    /// A filter picker is open: letters are search text.
+    Picker,
+    /// The help overlay is open: any key closes it.
+    Help,
+}
+
+/// Maps a key to an action for the current mode.
 #[must_use]
-pub fn action_for(key: KeyEvent, picker_open: bool) -> Option<Action> {
+pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
     // Ignore key releases and repeats reported by terminals with the kitty keyboard protocol.
     if key.kind != KeyEventKind::Press {
         return None;
     }
-    if picker_open {
-        return picker_action(key);
-    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match mode {
+        Mode::Picker => return picker_action(key),
+        Mode::Help if ctrl && key.code == KeyCode::Char('c') => return Some(Action::Quit),
+        Mode::Help => return Some(Action::CloseHelp),
+        Mode::Normal => {}
+    }
     let action = match key.code {
         KeyCode::Char('c') if ctrl => Action::Quit,
         KeyCode::Char('d') if ctrl => Action::PageDown,
@@ -72,6 +122,8 @@ pub fn action_for(key: KeyEvent, picker_open: bool) -> Option<Action> {
         KeyCode::Char('f') => Action::OpenPicker(PickerKind::Genre),
         KeyCode::Char('t') => Action::OpenPicker(PickerKind::Time),
         KeyCode::Char('L') => Action::OpenPicker(PickerKind::Location),
+        KeyCode::Char('o') => Action::OpenInBrowser,
+        KeyCode::Char('?') => Action::ShowHelp,
         _ => return None,
     };
     Some(action)
@@ -102,11 +154,11 @@ mod tests {
     use super::*;
 
     fn press(code: KeyCode) -> Option<Action> {
-        action_for(KeyEvent::new(code, KeyModifiers::NONE), false)
+        action_for(KeyEvent::new(code, KeyModifiers::NONE), Mode::Normal)
     }
 
     fn press_in_picker(code: KeyCode) -> Option<Action> {
-        action_for(KeyEvent::new(code, KeyModifiers::NONE), true)
+        action_for(KeyEvent::new(code, KeyModifiers::NONE), Mode::Picker)
     }
 
     #[test]
@@ -124,7 +176,7 @@ mod tests {
         assert_eq!(
             action_for(
                 KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                true
+                Mode::Picker
             ),
             Some(Action::Quit)
         );
@@ -144,7 +196,7 @@ mod tests {
         assert_eq!(
             action_for(
                 KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
-                false
+                Mode::Normal
             ),
             Some(Action::Quit)
         );
@@ -152,9 +204,31 @@ mod tests {
     }
 
     #[test]
+    fn help_closes_on_any_key() {
+        let help = |code| action_for(KeyEvent::new(code, KeyModifiers::NONE), Mode::Help);
+        assert_eq!(help(KeyCode::Char('q')), Some(Action::CloseHelp));
+        assert_eq!(help(KeyCode::Esc), Some(Action::CloseHelp));
+        assert_eq!(press(KeyCode::Char('?')), Some(Action::ShowHelp));
+    }
+
+    #[test]
+    fn help_lists_every_hint_key() {
+        // Compare without spaces: the hint bar writes `←→`, the help `← →`.
+        let help_keys: String = HELP
+            .iter()
+            .flat_map(|(_, keys)| keys.iter().map(|(k, _)| *k))
+            .collect::<String>()
+            .replace(' ', "");
+        for (key, _) in HINTS {
+            let first = key.split('/').next().unwrap_or(key).replace(' ', "");
+            assert!(help_keys.contains(&first), "{key} missing from help");
+        }
+    }
+
+    #[test]
     fn releases_are_ignored() {
         let mut key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         key.kind = KeyEventKind::Release;
-        assert_eq!(action_for(key, false), None);
+        assert_eq!(action_for(key, Mode::Normal), None);
     }
 }

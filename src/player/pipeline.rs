@@ -20,7 +20,7 @@ use symphonia::core::units::{Time, TimeBase};
 use url::Url;
 
 use super::engine::Msg;
-use super::http_source::{HttpSource, SourceCloser, StreamConfig};
+use super::http_source::{HttpSource, SourceCloser, StreamConfig, UrlRefresher};
 use super::segment::{STEREO, Segment, SegmentStats};
 
 /// Everything a pipeline needs from the engine.
@@ -29,6 +29,8 @@ pub(crate) struct PipelineContext {
     pub(crate) http: reqwest::Client,
     pub(crate) player: Arc<Player>,
     pub(crate) stream: StreamConfig,
+    /// Renews expired CDN URLs mid-stream.
+    pub(crate) refresher: Option<UrlRefresher>,
     /// Decoded audio buffered between decoder and audio device.
     pub(crate) pcm_buffer: Duration,
     pub(crate) engine: mpsc::Sender<Msg>,
@@ -78,10 +80,14 @@ impl Pipeline {
             .spawn(move || {
                 let engine = worker.ctx.engine.clone();
                 let shared = Arc::clone(&worker.shared);
-                if let Err(message) = worker.run(&url, start) {
+                if let Err(Failure { message, expired }) = worker.run(&url, start) {
                     // Errors after a stop are just the stream being torn down.
                     if !shared.stopped.load(Ordering::Acquire) {
-                        let _ = engine.send(Msg::Failed { id, message });
+                        let _ = engine.send(Msg::Failed {
+                            id,
+                            message,
+                            expired,
+                        });
                     }
                 }
             });
@@ -89,6 +95,7 @@ impl Pipeline {
             let _ = ctx.engine.send(Msg::Failed {
                 id,
                 message: format!("could not start decoder thread: {e}"),
+                expired: false,
             });
         }
         Self {
@@ -130,6 +137,52 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 // ---- Worker thread -----------------------------------------------------------------------------
 
+/// Why a pipeline stopped.
+struct Failure {
+    message: String,
+    /// The stream URL is no longer valid (expired signature); new track URLs are needed.
+    expired: bool,
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            expired: false,
+        }
+    }
+}
+
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
+/// Whether a failure means the signed URL expired. Expired CDN URLs answer 403/410
+/// (`PermissionDenied`). Expired `stream_redirect` URLs answer 404, like genuinely missing
+/// files, so for those we check the URL's own expiry time (`ts`, unix seconds).
+fn is_expiry(kind: std::io::ErrorKind, url: &Url) -> bool {
+    match kind {
+        std::io::ErrorKind::PermissionDenied => true,
+        std::io::ErrorKind::NotFound => signature_expired(url),
+        _ => false,
+    }
+}
+
+fn signature_expired(url: &Url) -> bool {
+    let Some(ts) = url
+        .query_pairs()
+        .find(|(k, _)| k == "ts")
+        .and_then(|(_, v)| v.parse::<u64>().ok())
+    else {
+        return false;
+    };
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .is_ok_and(|now| now.as_secs() >= ts)
+}
+
 struct Worker {
     ctx: Arc<PipelineContext>,
     shared: Arc<Shared>,
@@ -146,13 +199,14 @@ struct Decoding {
 }
 
 impl Worker {
-    fn run(self, url: &Url, start: Duration) -> Result<(), String> {
+    fn run(self, url: &Url, start: Duration) -> Result<(), Failure> {
         let shared = Arc::clone(&self.shared);
         let source = HttpSource::open(
             &self.ctx.runtime,
             self.ctx.http.clone(),
             url.clone(),
             self.ctx.stream,
+            self.ctx.refresher.clone(),
             |closer| {
                 *lock(&shared.closer) = Some(closer.clone());
                 // Dropped before we stored the closer: close it ourselves.
@@ -164,7 +218,10 @@ impl Worker {
         if self.stopped() {
             return Ok(());
         }
-        let source = source.map_err(|e| format!("could not open stream: {e}"))?;
+        let source = source.map_err(|e| Failure {
+            message: format!("could not open stream: {e}"),
+            expired: is_expiry(e.kind(), url),
+        })?;
         let mut d = open_decoder(source)?;
 
         let (mut producer, mut stats) = self.queue_segment(&mut d, start)?;
@@ -197,7 +254,14 @@ impl Worker {
                     tracing::debug!(error = %e, "stream closed");
                     return Ok(());
                 }
-                Err(e) => return Err(format!("stream error: {e}")),
+                Err(e) => {
+                    let expired =
+                        matches!(&e, SymphoniaError::IoError(io) if is_expiry(io.kind(), url));
+                    return Err(Failure {
+                        message: format!("stream error: {e}"),
+                        expired,
+                    });
+                }
             };
             if packet.track_id() != d.track_id {
                 continue;
@@ -209,7 +273,7 @@ impl Worker {
                     tracing::debug!(error = e, "skipping undecodable frame");
                     continue;
                 }
-                Err(e) => return Err(format!("decode error: {e}")),
+                Err(e) => return Err(format!("decode error: {e}").into()),
             };
             let frames = decoded.capacity();
             let buf = match &mut samples {
@@ -359,4 +423,26 @@ fn seek(d: &mut Decoding, to: Duration) -> Result<Duration, SymphoniaError> {
         Duration::from_secs(t.seconds) + Duration::from_secs_f64(t.frac)
     });
     Ok(landed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_expiry() {
+        let past: Url =
+            "https://bandcamp.com/stream_redirect?enc=mp3-128&track_id=1&ts=1700000000&t=x"
+                .parse()
+                .unwrap();
+        let future: Url = "https://bandcamp.com/stream_redirect?ts=99999999999"
+            .parse()
+            .unwrap();
+        let unsigned: Url = "https://example.com/gone.mp3".parse().unwrap();
+        assert!(is_expiry(std::io::ErrorKind::NotFound, &past));
+        assert!(!is_expiry(std::io::ErrorKind::NotFound, &future));
+        assert!(!is_expiry(std::io::ErrorKind::NotFound, &unsigned));
+        assert!(is_expiry(std::io::ErrorKind::PermissionDenied, &unsigned));
+        assert!(!is_expiry(std::io::ErrorKind::ConnectionAborted, &past));
+    }
 }

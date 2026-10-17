@@ -12,7 +12,9 @@
 //!   offset.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::pin::Pin;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -21,6 +23,11 @@ use reqwest::StatusCode;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, RANGE};
 use tokio::sync::Notify;
 use url::Url;
+
+/// Gets a fresh URL for an expired one, or `None` if it can't. Called at most once per
+/// expiry, from the download task.
+pub type UrlRefresher =
+    Arc<dyn Fn(Url) -> Pin<Box<dyn Future<Output = Option<Url>> + Send>> + Send + Sync>;
 
 /// Sizes of the download window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,12 +116,14 @@ impl HttpSource {
     /// Starts downloading `url` on `runtime` and blocks until the response headers arrive.
     ///
     /// `on_start` receives a [`SourceCloser`] before blocking, so another thread can abort the
-    /// open (or any later blocking read).
+    /// open (or any later blocking read). If the URL expires (HTTP 403/410), `refresher` is
+    /// asked for a new one and the download resumes where it was.
     pub fn open(
         runtime: &tokio::runtime::Handle,
         client: reqwest::Client,
         url: Url,
         config: StreamConfig,
+        refresher: Option<UrlRefresher>,
         on_start: impl FnOnce(SourceCloser),
     ) -> io::Result<Self> {
         assert!(
@@ -137,7 +146,7 @@ impl HttpSource {
             writer_wake: Notify::new(),
             config,
         });
-        runtime.spawn(download(Arc::clone(&shared), client, url));
+        runtime.spawn(download(Arc::clone(&shared), client, url, refresher));
         on_start(SourceCloser(Arc::clone(&shared)));
 
         let mut state = shared.lock();
@@ -312,14 +321,23 @@ enum Outcome {
     Restart,
     /// Connection dropped or timed out; retry from where we were.
     Retry(String),
-    /// Unrecoverable (e.g. HTTP 403 on an expired URL).
+    /// The signed URL expired (HTTP 403/410).
+    Expired(String),
+    /// Unrecoverable (e.g. HTTP 404).
     Fatal(io::ErrorKind, String),
     /// Whole file downloaded.
     Finished,
 }
 
-async fn download(shared: Arc<Shared>, client: reqwest::Client, mut url: Url) {
+async fn download(
+    shared: Arc<Shared>,
+    client: reqwest::Client,
+    mut url: Url,
+    refresher: Option<UrlRefresher>,
+) {
     let mut retries = 0;
+    // Refresh at most once per expiry, so a URL the refresher can't fix fails fast.
+    let mut already_refreshed = false;
     loop {
         let (start, generation) = {
             let s = shared.lock();
@@ -330,6 +348,9 @@ async fn download(shared: Arc<Shared>, client: reqwest::Client, mut url: Url) {
         };
 
         let outcome = fetch_from(&shared, &client, &mut url, start, generation).await;
+        if !matches!(outcome, Outcome::Expired(_)) {
+            already_refreshed = false;
+        }
         match outcome {
             Outcome::Closed => return,
             Outcome::Restart => retries = 0,
@@ -343,6 +364,29 @@ async fn download(shared: Arc<Shared>, client: reqwest::Client, mut url: Url) {
                     &shared,
                     generation,
                     io::ErrorKind::ConnectionAborted,
+                    message,
+                );
+                if wait_for_restart(&shared, generation).await {
+                    retries = 0;
+                } else {
+                    return;
+                }
+            }
+            Outcome::Expired(message) => {
+                if !already_refreshed && let Some(refresh) = &refresher {
+                    already_refreshed = true;
+                    if let Some(fresh) = refresh(url.clone()).await {
+                        tracing::info!(
+                            "stream URL expired; continuing with a already_refreshed one"
+                        );
+                        url = fresh;
+                        continue;
+                    }
+                }
+                fail(
+                    &shared,
+                    generation,
+                    io::ErrorKind::PermissionDenied,
                     message,
                 );
                 if wait_for_restart(&shared, generation).await {
@@ -402,14 +446,12 @@ async fn fetch_from(
             return Outcome::Fatal(io::ErrorKind::Unsupported, "server ignored Range".into());
         }
         (s, _) if s.is_server_error() => return Outcome::Retry(format!("HTTP {s}")),
+        // Signed CDN URLs expire after about a day.
+        (StatusCode::FORBIDDEN | StatusCode::GONE, _) => {
+            return Outcome::Expired(format!("HTTP {status}"));
+        }
         (s, _) if !s.is_success() => {
-            let kind = if matches!(s, StatusCode::FORBIDDEN | StatusCode::GONE) {
-                // Signed stream URLs expire after about a day.
-                io::ErrorKind::PermissionDenied
-            } else {
-                io::ErrorKind::NotFound
-            };
-            return Outcome::Fatal(kind, format!("HTTP {s}"));
+            return Outcome::Fatal(io::ErrorKind::NotFound, format!("HTTP {s}"));
         }
         _ => return Outcome::Fatal(io::ErrorKind::InvalidData, "missing content length".into()),
     };
