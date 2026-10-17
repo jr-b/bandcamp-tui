@@ -131,7 +131,10 @@ src/
   format.rs          # durations, prices, thousands, ellipsis truncation
   bandcamp/          # API client (M2): discover, album, filters, images, types, error
   player/            # streaming player (M3): engine, pipeline, http_source, segment
-  config.rs          # (M6) optional config file: default filters, volume, album_art
+  picker.rs          # filter popup model (genre/time/location), tag normalisation
+  fuzzy.rs           # tiny fuzzy matcher (prefix > word > substring > subsequence)
+  settings.rs        # state.toml: last filters + volume, atomic writes
+  config.rs          # (M7) optional user config: album_art
 tests/
   client.rs, player.rs, live.rs, fixtures/
 examples/
@@ -261,6 +264,20 @@ state transitions get unit tests without needing a terminal.
 
 Two panes (discover list | album detail) plus a now-playing bar.
 
+### Filters and remembered state (milestone 6)
+
+* One popup for all filters: `f` genre/tag, `t` time range, `L` location. Type to filter
+  (multi-word queries match in any order), `↑↓` to move, `⏎` to apply, `esc` to cancel.
+  Genres list their subgenres indented. Any typed text can also be used as a raw Bandcamp tag
+  (`Drum & Bass` → `drum-bass`). It's offered first if nothing in the list really matches,
+  otherwise last.
+* The "fresh" time facet (`-1`) is left out: the API rejects it without a login
+  (`Discover_1::DiscoverWebException`).
+* The last filters and the volume are saved to `state.toml` next to the log file (atomic write
+  on every change) and restored at startup. `-t`/`-s` override only what they set; `--fresh`
+  ignores the saved state. It's kept separate from a hand-edited config file (M7) so the app
+  never rewrites user comments.
+
 ### Album art: only on capable terminals
 
 Art is shown only when the terminal supports a real graphics protocol (kitty, iTerm2 or
@@ -313,8 +330,8 @@ Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 | `n` / `p`            | next / previous track                              |
 | `←/→` or `,`/`.`     | seek −/+10s                                        |
 | `+` / `-`            | volume                                             |
-| `f`                  | genre/tag picker (fuzzy filter)                    |
-| `s` / `t` / `L`      | cycle slice / time / pick location                 |
+| `f`                  | genre/tag picker (fuzzy search; any typed text can be used as a tag) |
+| `s` / `t` / `L`      | cycle sort order / pick time range / pick location |
 | `r`                  | refresh (reshuffles in "surprise me")              |
 | `o`                  | open album in browser (to buy it)                  |
 | `i`                  | toggle artist info (bio, location, credits)        |
@@ -338,7 +355,7 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
    with infinite scroll, and the now-playing bar.
 5. ✅ **Album pane.** Metadata, tracklist, play album/track, auto-advance, prefetch, greyed-out
    unstreamable tracks.
-6. **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
+6. ✅ **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
 7. **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
    expiry, `o` to open in browser, and media keys / MPRIS (stretch, behind a `mpris` feature on Linux).
 8. **Stretch.** Search, play queue across albums, and a "radio" mode that auto-plays the next discover album.

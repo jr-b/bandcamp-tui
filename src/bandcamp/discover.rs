@@ -8,7 +8,7 @@ use url::Url;
 use super::types::{ArtId, BandId, Date, ItemId, Price, TralbumKind};
 
 /// Discover sort order (`slice`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum Slice {
     /// Best-selling.
     #[default]

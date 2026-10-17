@@ -4,6 +4,7 @@
 mod album;
 mod discover;
 mod now_playing;
+mod picker;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -12,9 +13,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::{App, Focus, MessageKind};
-use crate::bandcamp::Slice;
+use crate::bandcamp::{Filters, Slice};
 use crate::format;
-use crate::input::HINTS;
+use crate::input::{HINTS, PICKER_HINTS};
 
 const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
@@ -44,6 +45,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     now_playing::draw(frame, now_playing, app);
     draw_footer(frame, footer, app);
+    if let Some(picker) = app.picker.as_mut() {
+        picker::draw(frame, body, picker);
+    }
 }
 
 /// A bordered pane, highlighted when focused.
@@ -67,21 +71,20 @@ fn slice_label(slice: Slice) -> &'static str {
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let genres = if app.query.tags.is_empty() {
-        "all genres".to_owned()
-    } else {
-        app.query.tags.join(" › ")
-    };
-    let left = Line::from(vec![
+    let mut left = vec![
         Span::styled(
             " bandcamp ",
             Style::new().fg(Color::Black).bg(ACCENT).bold(),
         ),
-        Span::raw(" Discover · "),
-        Span::styled(genres, Style::new().bold()),
-        Span::raw(" · "),
-        Span::styled(slice_label(app.query.slice), Style::new().bold()),
-    ]);
+        Span::raw(" Discover"),
+    ];
+    let mut parts = crate::picker::describe(Filters::snapshot(), &app.query);
+    parts.insert(1, slice_label(app.query.slice).to_owned());
+    for part in parts {
+        left.push(Span::styled(" · ", Style::new().dim()));
+        left.push(Span::styled(part, Style::new().bold()));
+    }
+    let left = Line::from(left);
     let right = if app.discover.total > 0 {
         Line::from(format!(
             "{} releases ",
@@ -105,9 +108,14 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         Some(m) => Line::from(format!(" {}", m.text)).fg(ACCENT),
         None => {
             // Show as many whole hints as fit; they're ordered by importance.
+            let hints = if app.picker.is_some() {
+                PICKER_HINTS
+            } else {
+                HINTS
+            };
             let mut spans = vec![Span::raw(" ")];
             let mut used = 1;
-            for (i, (keys, what)) in HINTS.iter().enumerate() {
+            for (i, (keys, what)) in hints.iter().enumerate() {
                 let gap = if i > 0 { 2 } else { 0 };
                 let width = gap + keys.chars().count() + 1 + what.len();
                 if used + width > usize::from(area.width) {
@@ -293,6 +301,34 @@ mod tests {
         assert!(text.contains("‖ Joyride — Ocean Company"), "{text}");
         assert!(text.contains("1:12 ━━"), "{text}");
         assert!(text.contains("3:51   vol  80%"), "{text}");
+    }
+
+    #[test]
+    fn genre_picker_popup() {
+        let mut app = app_with_page();
+        app.update(Action::OpenPicker(crate::picker::PickerKind::Genre));
+        insta::assert_snapshot!("genre_picker", render(&mut app, 100, 24).backend());
+        for c in "tech".chars() {
+            app.update(Action::PickerInput(c));
+        }
+        insta::assert_snapshot!("genre_picker_search", render(&mut app, 100, 24).backend());
+    }
+
+    #[test]
+    fn header_shows_all_filters() {
+        let mut app = app_with_page();
+        app.query.tags = vec!["electronic".into(), "techno".into()];
+        app.query.time_facet_id = Some(1);
+        app.query.geoname_id = 2_950_159;
+        let terminal = render(&mut app, 120, 10);
+        let first_line: String = (0..120)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol().to_owned())
+            .collect();
+        assert!(
+            first_line
+                .contains("Discover · electronic › techno · best-selling · this week · berlin"),
+            "{first_line}"
+        );
     }
 
     #[test]

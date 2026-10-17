@@ -10,9 +10,12 @@ use std::sync::Arc;
 use ratatui::widgets::TableState;
 
 use crate::bandcamp::{
-    Album, BandId, Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, ItemId, Slice, TralbumKind,
+    Album, BandId, Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, Filters, ItemId, Slice,
+    TralbumKind,
 };
+use crate::picker::{Picker, PickerKind};
 use crate::player::{PlaybackState, PlayerEvent, QueueTrack, Status};
+use crate::settings::Settings;
 
 /// Fetch the next page when the selection gets this close to the end of the list.
 const LOAD_MORE_THRESHOLD: usize = 10;
@@ -51,6 +54,13 @@ pub enum Action {
     Refresh,
     /// Cycle best-selling → new arrivals → surprise me.
     CycleSlice,
+    OpenPicker(PickerKind),
+    /// Close the picker without changing anything.
+    ClosePicker,
+    /// Text typed into the picker's search.
+    PickerInput(char),
+    PickerBackspace,
+    PickerClear,
     /// Terminal resized; just redraw.
     Resize,
     DiscoverLoaded {
@@ -86,6 +96,8 @@ pub enum Effect {
         kind: TralbumKind,
     },
     Player(PlayerCommand),
+    /// Remember filters and volume for next time.
+    SaveSettings(Settings),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -171,6 +183,8 @@ pub struct App {
     pub page_rows: usize,
     pub focus: Focus,
     pub album_pane: AlbumPane,
+    /// Open filter popup, if any. While open it gets all keys.
+    pub picker: Option<Picker>,
     albums: AlbumCache,
     /// Album requests in flight, so we never fetch the same release twice at once.
     album_requests: HashSet<ItemId>,
@@ -196,6 +210,7 @@ impl App {
             page_rows: 10,
             focus: Focus::Discover,
             album_pane: AlbumPane::default(),
+            picker: None,
             albums: AlbumCache::new(ALBUM_CACHE_SIZE),
             album_requests: HashSet::new(),
             album_errors: HashMap::new(),
@@ -262,6 +277,11 @@ impl App {
         if action.is_user_input() {
             self.message = None;
         }
+        if self.picker.is_some()
+            && let Some(effects) = self.picker_update(&action)
+        {
+            return effects;
+        }
         match action {
             Action::Quit => {
                 self.should_quit = true;
@@ -311,9 +331,19 @@ impl App {
                     Slice::New => Slice::Random,
                     Slice::Random => Slice::Top,
                 };
-                vec![self.reload()]
+                vec![self.reload(), self.save_settings()]
             }
-            Action::Resize => vec![],
+            Action::OpenPicker(kind) => {
+                self.picker = Some(Picker::new(kind, Filters::snapshot(), &self.query));
+                vec![]
+            }
+            // Picker keys with no picker open (handled above when one is), and resizes, which
+            // only need a redraw.
+            Action::ClosePicker
+            | Action::PickerInput(_)
+            | Action::PickerBackspace
+            | Action::PickerClear
+            | Action::Resize => vec![],
             Action::DiscoverLoaded { generation, result } => {
                 self.discover_loaded(generation, result)
             }
@@ -321,6 +351,52 @@ impl App {
             Action::AlbumLoaded { id, result } => self.album_loaded(id, result),
             Action::Player { event, status } => self.player_update(event, status),
         }
+    }
+
+    // ---- Filters -------------------------------------------------------------------------------
+
+    /// Handles `action` while the picker is open. `None` means "not a picker action": handle
+    /// it normally (e.g. API results and player events keep flowing).
+    fn picker_update(&mut self, action: &Action) -> Option<Vec<Effect>> {
+        let picker = self.picker.as_mut()?;
+        match action {
+            Action::Up => picker.move_by(-1),
+            Action::Down => picker.move_by(1),
+            Action::PageUp => picker.move_by(-10),
+            Action::PageDown => picker.move_by(10),
+            Action::Top => picker.move_by(isize::MIN),
+            Action::Bottom => picker.move_by(isize::MAX),
+            Action::PickerInput(c) => picker.push(*c),
+            Action::PickerBackspace => picker.backspace(),
+            Action::PickerClear => picker.clear(),
+            Action::ClosePicker => self.picker = None,
+            Action::Play => {
+                let choice = picker.selected().cloned();
+                self.picker = None;
+                if let Some(choice) = choice {
+                    let mut query = self.query.clone();
+                    choice.apply(&mut query);
+                    if query != self.query {
+                        self.query = query;
+                        return Some(vec![self.reload(), self.save_settings()]);
+                    }
+                }
+            }
+            Action::Quit => return None,
+            _ if action.is_user_input() => {} // other keys are swallowed by the popup
+            _ => return None,
+        }
+        Some(vec![])
+    }
+
+    /// Current filters and volume, to restore next time.
+    #[must_use]
+    pub fn settings(&self) -> Settings {
+        Settings::from_state(&self.query, self.player.volume)
+    }
+
+    fn save_settings(&self) -> Effect {
+        Effect::SaveSettings(self.settings())
     }
 
     // ---- Discover ------------------------------------------------------------------------------
@@ -620,7 +696,10 @@ impl App {
         let volume = ((self.player.volume + delta) / VOLUME_STEP).round() * VOLUME_STEP;
         let volume = volume.clamp(0.0, 1.0);
         self.player.volume = volume;
-        vec![Effect::Player(PlayerCommand::SetVolume(volume))]
+        vec![
+            Effect::Player(PlayerCommand::SetVolume(volume)),
+            self.save_settings(),
+        ]
     }
 
     fn info(&mut self, text: impl Into<String>) {
@@ -840,7 +919,7 @@ mod tests {
         assert_eq!(app.query.slice, Slice::New);
         assert_eq!(app.discover.items, []);
         assert!(
-            matches!(&effects[..], [Effect::FetchDiscover { query, cursor: None, .. }] if query.slice == Slice::New)
+            matches!(&effects[..], [Effect::FetchDiscover { query, cursor: None, .. }, Effect::SaveSettings(_)] if query.slice == Slice::New)
         );
         app.update(Action::DiscoverLoaded {
             generation: old,
@@ -1010,6 +1089,51 @@ mod tests {
     }
 
     #[test]
+    fn picking_a_genre_reloads_and_saves() {
+        let mut app = loaded();
+        app.update(Action::OpenPicker(PickerKind::Genre));
+        // Keys go to the picker, not the list.
+        app.update(Action::Down);
+        assert_eq!(app.table.selected(), Some(0));
+        for c in "techno".chars() {
+            app.update(Action::PickerInput(c));
+        }
+        let effects = app.update(Action::Play);
+        assert!(app.picker.is_none());
+        assert_eq!(app.query.tags, ["electronic", "techno"]);
+        assert!(
+            matches!(&effects[..], [Effect::FetchDiscover { query, cursor: None, .. }, Effect::SaveSettings(s)]
+                if query.tags == ["electronic", "techno"] && s.discover.tags == ["electronic", "techno"]),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn picking_the_current_value_or_cancelling_changes_nothing() {
+        let mut app = loaded();
+        app.update(Action::OpenPicker(PickerKind::Time));
+        assert_eq!(app.update(Action::Play), [], "Any time is already selected");
+        app.update(Action::OpenPicker(PickerKind::Location));
+        app.update(Action::PickerInput('b'));
+        assert_eq!(app.update(Action::ClosePicker), []);
+        assert!(app.picker.is_none());
+        assert_eq!(app.query.geoname_id, 0);
+    }
+
+    #[test]
+    fn api_results_still_arrive_while_the_picker_is_open() {
+        let mut app = loaded();
+        app.update(Action::OpenPicker(PickerKind::Genre));
+        let generation = app.discover.generation;
+        app.update(Action::DiscoverLoaded {
+            generation,
+            result: Ok(page_fixture()),
+        });
+        assert_eq!(app.discover.items.len(), 8);
+        assert!(app.picker.is_some());
+    }
+
+    #[test]
     fn transport_keys_do_nothing_until_something_plays() {
         let mut app = loaded();
         assert_eq!(app.update(Action::TogglePause), []);
@@ -1024,9 +1148,11 @@ mod tests {
     #[test]
     fn volume_steps_and_clamps() {
         let mut app = loaded();
-        assert_eq!(
-            app.update(Action::VolumeDown),
-            [Effect::Player(PlayerCommand::SetVolume(0.95))]
+        let effects = app.update(Action::VolumeDown);
+        assert_eq!(effects[0], Effect::Player(PlayerCommand::SetVolume(0.95)));
+        assert!(
+            matches!(&effects[1], Effect::SaveSettings(s) if (s.volume - 0.95).abs() < 1e-6),
+            "{effects:?}"
         );
         for _ in 0..30 {
             app.update(Action::VolumeUp);

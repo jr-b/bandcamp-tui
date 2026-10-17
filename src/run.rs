@@ -25,6 +25,9 @@ pub struct Services {
     pub client: BandcampClient,
     pub player: Option<PlayerHandle>,
     pub player_events: UnboundedReceiver<PlayerEvent>,
+    /// Where to remember filters and volume; `None` disables saving.
+    pub settings_path: Option<std::path::PathBuf>,
+    pub initial_volume: f32,
 }
 
 impl std::fmt::Debug for Services {
@@ -44,13 +47,17 @@ pub async fn run(
         client,
         player,
         mut player_events,
+        settings_path,
+        initial_volume,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
     let (mut app, effects) = App::new(query, player.is_some());
+    app.player.volume = initial_volume;
     let executor = Executor {
         client,
         player: player.clone(),
         results: results_tx,
+        settings_path,
     };
     // At most one pending debounced album load: (when, which).
     let mut album_due: Option<(Instant, crate::bandcamp::ItemId)> = None;
@@ -68,7 +75,7 @@ pub async fn run(
         }
         let action = tokio::select! {
             event = input.next() => match event {
-                Some(Ok(Event::Key(key))) => input::action_for(key),
+                Some(Ok(Event::Key(key))) => input::action_for(key, app.picker.is_some()),
                 Some(Ok(Event::Resize(..))) => Some(Action::Resize),
                 Some(Ok(_)) => None,
                 Some(Err(e)) => return Err(e),
@@ -124,6 +131,7 @@ struct Executor {
     client: BandcampClient,
     player: Option<PlayerHandle>,
     results: UnboundedSender<Action>,
+    settings_path: Option<std::path::PathBuf>,
 }
 
 impl Executor {
@@ -168,6 +176,15 @@ impl Executor {
                 Effect::Player(command) => {
                     if let Some(player) = &self.player {
                         apply(player, command);
+                    }
+                }
+                Effect::SaveSettings(settings) => {
+                    // Synchronous on purpose: the file is ~200 bytes, and writing in order
+                    // guarantees the last change wins.
+                    if let Some(path) = &self.settings_path
+                        && let Err(e) = settings.save(path)
+                    {
+                        tracing::warn!(path = %path.display(), error = %e, "couldn't save state");
                     }
                 }
             }
