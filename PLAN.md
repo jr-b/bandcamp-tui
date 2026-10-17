@@ -121,27 +121,20 @@ terminal, so `tests/` can use it, and `src/main.rs` wires it into the TUI.
 
 ```
 src/
-  main.rs            # arg parsing, terminal setup/teardown, panic hook, run loop
-  app.rs             # App state + update(Action) -> state transitions (pure, testable)
-  action.rs          # Action/Event enum (keypresses, API results, player events)
-  bandcamp/
-    mod.rs           # BandcampClient (reqwest), base URL injectable for tests
-    discover.rs      # DiscoverQuery builder, DiscoverResponse/DiscoverItem serde types
-    album.rs         # tralbum_details types → domain `Album`, `Track`
-    filters.rs       # genres/subgenres/slices/times/locations (embedded JSON snapshot)
-    images.rs        # art URL helpers
-  player/
-    mod.rs           # Player handle: command channel (Play, Pause, Seek, Stop, Volume)
-    engine.rs        # audio thread: rodio Sink, fetch + decode, emits PlayerEvent
-  ui/
-    mod.rs           # draw(frame, &App)
-    discover.rs      # album grid/list + filter bar
-    album.rs         # album detail: art, metadata, tracklist
-    now_playing.rs   # bottom bar: track, progress gauge, volume, state
-    help.rs          # keybinding overlay
-  config.rs          # optional config file (default filters, volume, keymap)
+  main.rs            # CLI (clap), logging to a file, runtime, terminal init/restore
+  lib.rs
+  app.rs             # App state, Action, Effect, pure `update` (unit-tested)
+  run.rs             # event loop: input/API/player → Action → update → Effects; redraw on change
+  input.rs           # key bindings → Action
+  ui.rs              # draw(frame, &mut App); insta snapshot tests  (split into ui/ in M5)
+  format.rs          # durations, prices, thousands, ellipsis truncation
+  bandcamp/          # API client (M2): discover, album, filters, images, types, error
+  player/            # streaming player (M3): engine, pipeline, http_source, segment
+  config.rs          # (M6) optional config file: default filters, volume, album_art
 tests/
-  fixtures/          # recorded JSON responses (discover, tralbum_details)
+  client.rs, player.rs, live.rs, fixtures/
+examples/
+  play_album.rs      # headless end-to-end player
 ```
 
 ### Concurrency model
@@ -204,8 +197,8 @@ Code: `src/player/` (`http_source.rs`, `pipeline.rs`, `segment.rs`, `engine.rs`)
 
 | resource          | target                                                    | how                                                                                 |
 |-------------------|-----------------------------------------------------------|-------------------------------------------------------------------------------------|
-| RAM (RSS)         | **< 30 MB** while playing — ✅ measured 26.6 MB RSS (11 MB footprint), flat over time | 1 MiB compressed ring (+1 MiB for the next track), ~0.2 MiB PCM ring, bounded LRU caches |
-| CPU               | **< 2 %** of one core while playing — ✅ measured 0.3–0.4 % steady; **~0 %** when idle (to measure) | event-driven redraws only; MP3 decode is cheap                                      |
+| RAM (RSS)         | **< 30 MB** while playing — ✅ headless 26.6 MB (11 MB footprint), full TUI ~28 MB, flat over time | 1 MiB compressed ring (+1 MiB for the next track), ~0.2 MiB PCM ring, bounded LRU caches |
+| CPU               | **< 2 %** of one core while playing — ✅ measured 0.2–0.3 % with the TUI (redraws only when the second changes); ✅ 0.0 % paused | event-driven redraws only; MP3 decode is cheap                                      |
 | Network           | ≈ listening rate (16 KB/s)                                | bounded ring applies backpressure; no full-track downloads; debounced metadata fetches |
 | Threads           | main + 1 tokio worker + decode + cpal                     | small runtime (`worker_threads(1)`); no per-request threads                         |
 | Disk              | 0 (logs only)                                             | no audio caching                                                                    |
@@ -312,19 +305,20 @@ Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 | key                  | action                                             |
 |----------------------|----------------------------------------------------|
 | `j/k`, `↓/↑`         | move selection                                     |
+| `g/G`, `Home/End`    | top / bottom; `PgUp/PgDn`, `Ctrl-u/d` page          |
 | `Tab` / `h/l`        | switch pane                                        |
 | `Enter`              | album list: play album from track 1; tracklist: play that track |
 | `Space`              | play/pause                                         |
 | `n` / `p`            | next / previous track                              |
 | `←/→` or `,`/`.`     | seek −/+10s                                        |
 | `+` / `-`            | volume                                             |
-| `g`                  | genre/tag picker (fuzzy filter)                    |
+| `f`                  | genre/tag picker (fuzzy filter)                    |
 | `s` / `t` / `L`      | cycle slice / time / pick location                 |
 | `r`                  | refresh (reshuffles in "surprise me")              |
 | `o`                  | open album in browser (to buy it)                  |
 | `i`                  | toggle artist info (bio, location, credits)        |
 | `/`                  | search (stretch)                                   |
-| `q`, `Ctrl-C`        | quit                                               |
+| `q`, `Ctrl-C`        | quit (`Esc` deliberately doesn't quit; it closes popups) |
 
 Infinite scroll: when the selection gets within 10 items of the end and `cursor != null`, fetch the next page.
 
@@ -339,7 +333,7 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
    thread, PCM ring and buffering states. An example binary (`examples/play_album.rs`) streams the
    first discover album end to end. Spike the out-of-window seek (byte-offset reopen) and
    measure the §2.2 budget here, before any UI exists.
-4. **TUI skeleton.** Terminal init/restore (including on panic), event loop, discover list
+4. ✅ **TUI skeleton.** Terminal init/restore (including on panic), event loop, discover list
    with infinite scroll, and the now-playing bar.
 5. **Album pane.** Metadata, tracklist, play album/track, auto-advance, prefetch, greyed-out
    unstreamable tracks.

@@ -3,5 +3,10 @@
 //! The library half holds everything that can be tested without a terminal; `main.rs` wires it
 //! into the TUI.
 
+pub mod app;
 pub mod bandcamp;
+pub mod format;
+pub mod input;
 pub mod player;
+pub mod run;
+pub mod ui;
