@@ -3,6 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::Action;
+use crate::picker::PickerKind;
 
 /// One line of the key help, in display order: `(keys, what they do)`.
 /// Ordered by importance: narrow terminals show only the first few.
@@ -14,17 +15,33 @@ pub const HINTS: &[(&str, &str)] = &[
     ("n/p", "track"),
     ("←→", "seek"),
     ("+/-", "volume"),
+    ("f", "genre"),
+    ("t", "time"),
+    ("L", "place"),
     ("i", "info"),
     ("s", "sort"),
     ("r", "refresh"),
     ("↑↓", "move"),
 ];
 
+/// Hints shown while a picker is open.
+pub const PICKER_HINTS: &[(&str, &str)] = &[
+    ("type", "to search"),
+    ("↑↓", "move"),
+    ("⏎", "select"),
+    ("esc", "cancel"),
+    ("ctrl-u", "clear"),
+];
+
+/// Maps a key to an action. `picker_open` switches to text-entry bindings.
 #[must_use]
-pub fn action_for(key: KeyEvent) -> Option<Action> {
+pub fn action_for(key: KeyEvent, picker_open: bool) -> Option<Action> {
     // Ignore key releases and repeats reported by terminals with the kitty keyboard protocol.
     if key.kind != KeyEventKind::Press {
         return None;
+    }
+    if picker_open {
+        return picker_action(key);
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let action = match key.code {
@@ -52,6 +69,29 @@ pub fn action_for(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('-' | '_') => Action::VolumeDown,
         KeyCode::Char('r') => Action::Refresh,
         KeyCode::Char('s') => Action::CycleSlice,
+        KeyCode::Char('f') => Action::OpenPicker(PickerKind::Genre),
+        KeyCode::Char('t') => Action::OpenPicker(PickerKind::Time),
+        KeyCode::Char('L') => Action::OpenPicker(PickerKind::Location),
+        _ => return None,
+    };
+    Some(action)
+}
+
+fn picker_action(key: KeyEvent) -> Option<Action> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let action = match key.code {
+        KeyCode::Char('c') if ctrl => Action::Quit,
+        KeyCode::Char('u') if ctrl => Action::PickerClear,
+        KeyCode::Char('p' | 'k') if ctrl => Action::Up,
+        KeyCode::Char('n' | 'j') if ctrl => Action::Down,
+        KeyCode::Esc => Action::ClosePicker,
+        KeyCode::Enter => Action::Play,
+        KeyCode::Up => Action::Up,
+        KeyCode::Down => Action::Down,
+        KeyCode::PageUp => Action::PageUp,
+        KeyCode::PageDown => Action::PageDown,
+        KeyCode::Backspace => Action::PickerBackspace,
+        KeyCode::Char(c) if !ctrl => Action::PickerInput(c),
         _ => return None,
     };
     Some(action)
@@ -62,7 +102,34 @@ mod tests {
     use super::*;
 
     fn press(code: KeyCode) -> Option<Action> {
-        action_for(KeyEvent::new(code, KeyModifiers::NONE))
+        action_for(KeyEvent::new(code, KeyModifiers::NONE), false)
+    }
+
+    fn press_in_picker(code: KeyCode) -> Option<Action> {
+        action_for(KeyEvent::new(code, KeyModifiers::NONE), true)
+    }
+
+    #[test]
+    fn picker_takes_letters_as_text() {
+        assert_eq!(
+            press_in_picker(KeyCode::Char('q')),
+            Some(Action::PickerInput('q'))
+        );
+        assert_eq!(
+            press_in_picker(KeyCode::Char('j')),
+            Some(Action::PickerInput('j'))
+        );
+        assert_eq!(press_in_picker(KeyCode::Esc), Some(Action::ClosePicker));
+        assert_eq!(press_in_picker(KeyCode::Enter), Some(Action::Play));
+        assert_eq!(
+            action_for(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                true
+            ),
+            Some(Action::Quit)
+        );
+        // Esc does nothing outside the picker (it doesn't quit).
+        assert_eq!(press(KeyCode::Esc), None);
     }
 
     #[test]
@@ -75,7 +142,10 @@ mod tests {
     #[test]
     fn ctrl_c_quits_but_c_does_nothing() {
         assert_eq!(
-            action_for(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            action_for(
+                KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+                false
+            ),
             Some(Action::Quit)
         );
         assert_eq!(press(KeyCode::Char('c')), None);
@@ -85,6 +155,6 @@ mod tests {
     fn releases_are_ignored() {
         let mut key = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         key.kind = KeyEventKind::Release;
-        assert_eq!(action_for(key), None);
+        assert_eq!(action_for(key, false), None);
     }
 }

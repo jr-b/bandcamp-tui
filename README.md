@@ -3,14 +3,16 @@
 A terminal player for browsing [Bandcamp Discover](https://bandcamp.com/discover/) and
 streaming full albums. No account or login needed.
 
-> **Status:** early development. See [PLAN.md](PLAN.md) for the design and roadmap.
+> **Status:** usable; polishing. See [PLAN.md](PLAN.md) for the design and roadmap.
 
-## Planned features
+## Features
 
 - Browse Discover by genre/tag, best-selling / new / surprise-me, time period and location
-- Stream full albums (128 kbps MP3, the same quality as the website) with low memory use
-- Album and artist info, with cover art on terminals that support kitty, iTerm2 or sixel graphics
-- Keyboard-driven, with vim and arrow keys
+- Stream full albums (128 kbps MP3, the same quality as the website) with gapless track changes,
+  in about 30 MB of memory and well under 1 % CPU
+- Album and artist info, tracklists, play from any track
+- Keyboard-driven, with vim and arrow keys; remembers your filters and volume
+- Planned: cover art on terminals that support kitty, iTerm2 or sixel graphics
 
 ## Building
 
@@ -28,6 +30,32 @@ sudo apt-get install libasound2-dev
 # Fedora
 sudo dnf install alsa-lib-devel
 ```
+
+## Usage
+
+```sh
+bandcamp-tui                       # last-used filters
+bandcamp-tui -t electronic -t techno -s new
+bandcamp-tui --fresh               # ignore remembered filters and volume
+```
+
+| key | action |
+|-----|--------|
+| `↑↓` / `j k`, `g G`, `PgUp PgDn` | move |
+| `⏎` | play album (list) / play from track (tracklist) |
+| `space` | pause |
+| `n` / `p` | next / previous track |
+| `←` / `→` | seek 10 s |
+| `+` / `-` | volume |
+| `tab`, `h` / `l` | switch pane |
+| `i` | album about / credits / artist bio |
+| `f` / `t` / `L` | pick genre or tag / time range / location |
+| `s` | cycle best-selling / new arrivals / surprise me |
+| `r` | refresh |
+| `q`, `ctrl-c` | quit |
+
+Filters and volume are remembered in `state.toml`, next to the log file
+(`~/Library/Application Support/bandcamp-tui/` on macOS, `~/.local/share/bandcamp-tui/` on Linux).
 
 ## Album art and tmux
 
