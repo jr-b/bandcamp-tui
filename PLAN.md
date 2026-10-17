@@ -22,10 +22,14 @@ Request body (JSON):
   "time_facet_id": null,
   "cursor": "*",
   "size": 60,
-  "include_result_types": ["a", "s"],
+  "include_result_types": ["a"],
   "followed_bands": false
 }
 ```
+
+Only `slice` and `include_result_types` are required; omitting either returns a
+`MissingParamError`. `include_result_types` can include `"s"` (merch, `item_type: "p"`), but we
+only request `"a"`, because merch can't be played.
 
 | field            | values                                                                                          |
 |------------------|-------------------------------------------------------------------------------------------------|
@@ -37,6 +41,11 @@ Request body (JSON):
 | `cursor`         | `"*"` for first page, then the `cursor` from the previous response (`null` = end of results)    |
 
 Response: `{ results: [...], result_count, batch_result_count, cursor, discover_spec_id }`.
+
+**Errors come back with HTTP 200**, in two shapes. The web API uses
+`{"__api_special__":"exception","error_type":"Endpoints::MissingParamError"}` and the mobile
+API uses `{"error":true,"error_message":"No such tralbum for band 1: 1"}`. The client checks
+every body for both shapes.
 Each result contains: `item_id`, `item_type` (`a` album / `t` track), `title`, `item_url`,
 `band_id`, `band_name`, `album_artist` (nullable, overrides band_name), `band_location`,
 `band_genre_id`, `primary_image.image_id`, `release_date`, `track_count`, `duration`,
@@ -80,7 +89,8 @@ if the mobile API changes or breaks.
 
 `https://f4.bcbits.com/img/a{art_id}_{size}.jpg` (album art; `a` prefix) and
 `https://f4.bcbits.com/img/{image_id}_{size}.jpg` (band images). Useful sizes:
-`7` = 160px (~13 KB), `16` = 700px, `10` = full size. For terminal rendering, size `7` or `2` is enough.
+`3` = 100px, `7` = 150px (~13 KB), `2` = 350px, `5`/`16` = 700px, `10` = 1200px, `1` = original
+(e.g. 3000px). For terminal rendering, size `7` is enough.
 
 ### 1.5 Search (stretch goal)
 
@@ -106,8 +116,8 @@ next streamable track (prefetch it while the current one plays)
 
 ## 2. Architecture
 
-A single binary crate with a library-style module layout (so the core logic stays testable),
-on stable Rust, edition 2024.
+A lib + bin crate on stable Rust, edition 2024. `src/lib.rs` holds everything testable without a
+terminal, so `tests/` can use it, and `src/main.rs` wires it into the TUI.
 
 ```
 src/
@@ -197,7 +207,7 @@ Other measures:
 * **Render only when something changes.** A dirty flag is set by input, API or player events.
   Progress ticks run at 4 Hz only while playing and stop when paused or idle; no busy loop.
 * **Bounded caches.** Album details LRU (64 entries, metadata only). Cover art is fetched at
-  size `7` (160 px), decoded once into the terminal-protocol form, raw bytes dropped, LRU of 16.
+  size `7` (150 px), decoded once into the terminal-protocol form, raw bytes dropped, LRU of 16.
   The discover list keeps at most ~1,000 items.
 * **One shared `reqwest::Client`** for connection pooling and HTTP/2 multiplexing to `bcbits.com`.
 * **Minimal crate features:** `rodio` with `default-features = false` and only `playback` +
@@ -234,7 +244,7 @@ state transitions get unit tests without needing a terminal.
 ## 4. UI / UX
 
 ```
-┌ bandcamp ─ [electronic › ambient] [best-selling] [any time] [anywhere] ─────────── ? help ┐
+┌ bandcamp ─ [electronic › techno]  [best-selling] [any time] [anywhere] ─────────── ? help ┐
 │ Discover (1,959,593)                    │ ┌──────────┐ Ocean Company                        │
 │ ▶ Ocean Company — Hotel Pools       10t │ │  (art)   │ by Ocean Company · Stratford Ct.     │
 │   From The Manor House — N4 Records  8t │ │          │ released 16 Oct 2026 · Portland, OR  │
@@ -283,7 +293,7 @@ Everywhere else, the album pane is text only. **No halfblock or ASCII-art fallba
 ```
 
   Pressing `i` toggles an artist info panel (band bio, location, credits) in both modes.
-* **When art is enabled:** cover images are fetched at size `7` (160 px) only for the
+* **When art is enabled:** cover images are fetched at size `7` (150 px) only for the
   *selected* album (debounced together with the detail fetch), resized once to the pane's cell
   size, and cached as encoded protocol data (LRU of 16; see §2.2). If a fetch fails, the pane
   falls back to text for that album.

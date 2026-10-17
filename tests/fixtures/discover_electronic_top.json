@@ -1,0 +1,235 @@
+{
+    "results": [
+        {
+            "item_id": 3457085593,
+            "item_type": "a",
+            "result_type": "a",
+            "title": "Ocean Company",
+            "item_url": "https://hotelpoolsmusic.bandcamp.com/album/ocean-company?from=discover_page",
+            "primary_image": {
+                "image_id": 4072557709,
+                "is_art": true
+            },
+            "addl_images": null,
+            "band_id": 2686449259,
+            "album_artist": "Ocean Company",
+            "band_name": "Hotel Pools",
+            "band_url": "https://hotelpoolsmusic.bandcamp.com?from=discover_page",
+            "is_free_download": false,
+            "is_set_price": false,
+            "price": {
+                "amount": 1000,
+                "currency": "USD",
+                "is_money": true
+            },
+            "band_genre_id": 10,
+            "band_location": "Portland, Oregon",
+            "featured_track": {
+                "id": 1185711751,
+                "title": "Oscillate",
+                "band_name": "Ocean Company",
+                "band_id": 2686449259,
+                "stream_url": "https://t4.bcbits.com/stream/6d028d9252fe28aab4d57686340c15a1/mp3-128/1185711751?p=0&ts=1792348510&t=bd477c1c78c7fb23b51264f5e214c2976cda8d24&token=1792348510_fd7d60dc909cc791107f95e1f73e1a92d18956a5",
+                "duration": 252.625
+            },
+            "is_album_preorder": false,
+            "release_date": "2026-10-16 00:00:00 UTC",
+            "track_count": 10,
+            "duration": 2279.3035888671875,
+            "is_wishlisted": null,
+            "is_owned": null,
+            "package_info": [
+                {
+                    "package_id": 3776449849,
+                    "format": "vinyl",
+                    "is_digital_included": true,
+                    "image_id": 47546233,
+                    "is_preorder": false,
+                    "is_set_price": false,
+                    "type_id": 2,
+                    "title": "Limited Edition 12\" Vinyl Primary Quad Color",
+                    "price": {
+                        "amount": 3000,
+                        "currency": "USD",
+                        "is_money": true
+                    }
+                },
+                {
+                    "package_id": 654091892,
+                    "format": "cd",
+                    "is_digital_included": true,
+                    "image_id": 47994653,
+                    "is_preorder": false,
+                    "is_set_price": false,
+                    "type_id": 1,
+                    "title": "The Ocean CD",
+                    "price": {
+                        "amount": 2500,
+                        "currency": "USD",
+                        "is_money": true
+                    }
+                },
+                {
+                    "package_id": 3210007308,
+                    "format": "cassette",
+                    "is_digital_included": true,
+                    "image_id": 47994678,
+                    "is_preorder": false,
+                    "is_set_price": false,
+                    "type_id": 3,
+                    "title": "The Cloud Cassette",
+                    "price": {
+                        "amount": 2000,
+                        "currency": "USD",
+                        "is_money": true
+                    }
+                }
+            ],
+            "band_image": {
+                "image_id": 13989985,
+                "is_art": false
+            },
+            "is_following_band": null
+        },
+        {
+            "item_id": 3577363991,
+            "item_type": "a",
+            "result_type": "a",
+            "title": "Pete Cannon - From The Manor House (N4LP001)",
+            "item_url": "https://n4records.bandcamp.com/album/pete-cannon-from-the-manor-house-n4lp001?from=discover_page",
+            "primary_image": {
+                "image_id": 758413168,
+                "is_art": true
+            },
+            "addl_images": null,
+            "band_id": 3558544964,
+            "album_artist": null,
+            "band_name": "N4 Records",
+            "band_url": "https://n4records.bandcamp.com?from=discover_page",
+            "is_free_download": false,
+            "is_set_price": false,
+            "price": {
+                "amount": 1199,
+                "currency": "GBP",
+                "is_money": true
+            },
+            "band_genre_id": 10,
+            "band_location": "London, UK",
+            "featured_track": {
+                "id": 1859618642,
+                "title": "Transmission",
+                "band_name": "N4 Records",
+                "band_id": 3558544964,
+                "stream_url": "https://t4.bcbits.com/stream/b67369c8a3f3e452c8248e444988a956/mp3-128/1859618642?p=0&ts=1792348510&t=4e24d0dc91dc8aca3b798c3f337a18ea3696b245&token=1792348510_c0177f2df726f6031e19f51f6f24d954853df809",
+                "duration": 354.953
+            },
+            "is_album_preorder": false,
+            "release_date": "2026-10-15 00:00:00 UTC",
+            "track_count": 12,
+            "duration": 3756.2266998291016,
+            "is_wishlisted": null,
+            "is_owned": null,
+            "package_info": null,
+            "band_image": {
+                "image_id": 15543211,
+                "is_art": false
+            },
+            "is_following_band": null
+        },
+        {
+            "item_id": 1085387917,
+            "item_type": "a",
+            "result_type": "a",
+            "title": "Invisible Places",
+            "item_url": "https://phelios.bandcamp.com/album/invisible-places?from=discover_page",
+            "primary_image": {
+                "image_id": 3101047247,
+                "is_art": true
+            },
+            "addl_images": null,
+            "band_id": 1802139114,
+            "album_artist": null,
+            "band_name": "Martin St\u00fcrtzer",
+            "band_url": "https://phelios.bandcamp.com?from=discover_page",
+            "is_free_download": false,
+            "is_set_price": false,
+            "price": {
+                "amount": 0,
+                "currency": "EUR",
+                "is_money": true
+            },
+            "band_genre_id": 3,
+            "band_location": "Wuppertal, Germany",
+            "featured_track": {
+                "id": 3374589313,
+                "title": "Invisible Places",
+                "band_name": "Martin St\u00fcrtzer",
+                "band_id": 1802139114,
+                "stream_url": "https://t4.bcbits.com/stream/ac1e01def20465f3515f2be6209acf86/mp3-128/3374589313?p=0&ts=1792348510&t=155eef6cf67bd942e3ad7d180d9e632893557f61&token=1792348510_60443abf8fa856ff212c773766682f96f24fbe11",
+                "duration": 735.0
+            },
+            "is_album_preorder": false,
+            "release_date": "2026-10-16 09:26:12 UTC",
+            "track_count": 5,
+            "duration": 3008.9683837890625,
+            "is_wishlisted": null,
+            "is_owned": null,
+            "package_info": null,
+            "band_image": {
+                "image_id": 34225635,
+                "is_art": false
+            },
+            "is_following_band": null
+        },
+        {
+            "item_id": 3620665732,
+            "item_type": "a",
+            "result_type": "a",
+            "title": "AB (EP)",
+            "item_url": "https://djsprinter.bandcamp.com/album/ab-ep?from=discover_page",
+            "primary_image": {
+                "image_id": 697088916,
+                "is_art": true
+            },
+            "addl_images": null,
+            "band_id": 4009048036,
+            "album_artist": null,
+            "band_name": "DJ Sprinter",
+            "band_url": "https://djsprinter.bandcamp.com?from=discover_page",
+            "is_free_download": false,
+            "is_set_price": false,
+            "price": {
+                "amount": 50,
+                "currency": "GBP",
+                "is_money": true
+            },
+            "band_genre_id": 10,
+            "band_location": "Oslo, Norway",
+            "featured_track": {
+                "id": 2735739215,
+                "title": "A1 (Seq)",
+                "band_name": "DJ Sprinter",
+                "band_id": 4009048036,
+                "stream_url": "https://t4.bcbits.com/stream/589d35fab6485021b2ecaf3cf67deb52/mp3-128/2735739215?p=0&ts=1792348510&t=9882008a9b1150210f0b1b90a483dd4ca1e5ba1c&token=1792348510_ab5f74975460446b832c81d6051252e2ca32f8f0",
+                "duration": 250.286
+            },
+            "is_album_preorder": false,
+            "release_date": "2026-10-06 00:00:00 UTC",
+            "track_count": 4,
+            "duration": 1066.8495330810547,
+            "is_wishlisted": null,
+            "is_owned": null,
+            "package_info": null,
+            "band_image": {
+                "image_id": 39209125,
+                "is_art": false
+            },
+            "is_following_band": null
+        }
+    ],
+    "result_count": 1947113,
+    "batch_result_count": 4,
+    "discover_spec_id": 60,
+    "is_following_discover_spec": null,
+    "cursor": "AoMIQxKxaHj34ImLoQMrYTM2MjA2NjU3MzI="
+}
