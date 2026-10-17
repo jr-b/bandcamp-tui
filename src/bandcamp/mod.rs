@@ -134,6 +134,16 @@ impl BandcampClient {
     }
 }
 
+/// Parses a `discover_web` response body, e.g. one saved to disk.
+pub fn parse_discover(json: &str) -> Result<DiscoverPage> {
+    decode::<discover::Response>(DISCOVER, json.as_bytes()).map(Into::into)
+}
+
+/// Parses a `tralbum_details` response body.
+pub fn parse_album(json: &str) -> Result<Album> {
+    decode::<album::Response>(TRALBUM_DETAILS, json.as_bytes()).map(Into::into)
+}
+
 /// The two error shapes Bandcamp returns, both with HTTP 200:
 /// `{"error": true, "error_message": "..."}` (mobile API) and
 /// `{"__api_special__": "exception", "error_type": "..."}` (web API).
