@@ -150,6 +150,7 @@ fn main() -> Result<()> {
         settings_path,
         initial_volume: settings.volume,
         art,
+        autoplay: config.autoplay,
     };
     let result = runtime.block_on(run(&mut terminal, services, query));
     ratatui::restore();

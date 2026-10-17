@@ -335,6 +335,7 @@ Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 | `s` / `t` / `L`      | cycle sort order / pick time range / pick location |
 | `r`                  | refresh (reshuffles in "surprise me")              |
 | `o`                  | open album in browser (to buy it)                  |
+| `a`                  | autoplay on/off                                    |
 | `i`                  | toggle artist info (bio, location, credits)        |
 | `/`                  | search (stretch)                                   |
 | `q`, `Ctrl-C`        | quit (`Esc` deliberately doesn't quit; it closes popups) |
@@ -359,7 +360,7 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
 6. ✅ **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
 7. ✅ **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
    expiry, `o` to open in browser, and media keys / MPRIS (stretch, behind a `mpris` feature on Linux).
-8. **Stretch.** Search, play queue across albums, and a "radio" mode that auto-plays the next discover album.
+8. **Stretch.** Search, play queue across albums. (✅ "Radio" mode shipped as autoplay.)
 
 ### Polish (milestone 7)
 
@@ -379,7 +380,13 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
   footer hints. `o` opens the release with `open` / `xdg-open` / `start`.
 * `config.toml` (hand-edited, strict: unknown keys and bad values stop startup with the line and
   column) is kept separate from `state.toml` (app-written, lenient).
-* Not done (stretch): MPRIS/media keys, search, cross-album queue, radio mode.
+* **Autoplay** ("radio mode"), on by default (`autoplay = true` in `config.toml`; `a` toggles
+  it for the session). When the queue ends (last track finished or `n` on it), the next
+  Discover release after the finished one plays. Pre-orders are skipped, and so are releases
+  that turn out unplayable or fail to load; it gives up after 5 in a row. At the end of the
+  loaded list it fetches the next page and continues. The selection follows only if the user
+  was still on the finished album. Choosing something yourself cancels a pending autoplay.
+* Not done (stretch): MPRIS/media keys, search, cross-album queue.
 
 ## 6. Best practices checklist
 
