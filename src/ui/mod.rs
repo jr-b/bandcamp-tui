@@ -3,6 +3,7 @@
 
 mod album;
 mod discover;
+mod help;
 mod now_playing;
 mod picker;
 
@@ -47,6 +48,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_footer(frame, footer, app);
     if let Some(picker) = app.picker.as_mut() {
         picker::draw(frame, body, picker);
+    }
+    if app.show_help {
+        help::draw(frame, frame.area());
     }
 }
 
@@ -312,6 +316,44 @@ mod tests {
             app.update(Action::PickerInput(c));
         }
         insta::assert_snapshot!("genre_picker_search", render(&mut app, 100, 24).backend());
+    }
+
+    #[test]
+    fn album_with_cover_art() {
+        // Halfblocks only so the snapshot can show the cover; the app itself never uses them.
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        let id = app.selected().unwrap().id;
+        let art_id = app.selected().unwrap().art_id.unwrap();
+        show_album(&mut app, fixture_album("album"));
+        // Loading: placeholder of the same size.
+        insta::assert_snapshot!("cover_loading", render(&mut app, 120, 24).backend());
+        let art = crate::art::encode(
+            &ratatui_image::picker::Picker::halfblocks(),
+            &crate::art::tests::test_jpeg(),
+        )
+        .unwrap();
+        app.update(Action::ArtLoaded {
+            id: art_id,
+            result: Ok(art),
+        });
+        let terminal = render(&mut app, 120, 24);
+        let buffer = terminal.backend().buffer();
+        let halfblocks = buffer
+            .content()
+            .iter()
+            .filter(|c| matches!(c.symbol(), "▀" | "▄"))
+            .count();
+        assert!(halfblocks > 50, "cover not drawn ({halfblocks} cells)");
+        assert_eq!(app.selected().unwrap().id, id);
+        insta::assert_snapshot!("cover_loaded", terminal.backend());
+    }
+
+    #[test]
+    fn help_overlay() {
+        let mut app = app_with_page();
+        app.update(Action::ShowHelp);
+        insta::assert_snapshot!(render(&mut app, 100, 34).backend());
     }
 
     #[test]

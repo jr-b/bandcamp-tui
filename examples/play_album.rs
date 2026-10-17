@@ -92,6 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         client.http().clone(),
         Output::DefaultDevice,
         PlayerConfig::default(),
+        None,
         events_tx,
     )?;
     player.set_volume(0.5);

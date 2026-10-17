@@ -23,7 +23,7 @@ use rodio::mixer::Mixer;
 use tokio::sync::mpsc::UnboundedSender;
 use url::Url;
 
-pub use http_source::{HttpSource, SourceCloser, StreamConfig};
+pub use http_source::{HttpSource, SourceCloser, StreamConfig, UrlRefresher};
 
 use crate::bandcamp::Track;
 use engine::{Engine, Msg};
@@ -87,10 +87,12 @@ pub enum PlayerEvent {
     StateChanged(PlaybackState),
     /// The playing queue index changed (`None` when stopped).
     TrackChanged(Option<usize>),
-    /// A track couldn't be played; the player has moved on to the next one.
+    /// A track couldn't be played. Normally the player moves on to the next one; if the
+    /// track's URL had `expired`, it stops instead, so the queue can be rebuilt with fresh URLs.
     TrackFailed {
         index: usize,
         message: String,
+        expired: bool,
     },
     /// The last track finished.
     QueueEnded,
@@ -165,11 +167,13 @@ pub struct PlayerHandle {
 
 impl PlayerHandle {
     /// Starts the player thread. Downloads run on `runtime`, using `http`'s connection pool.
+    /// `refresher` renews CDN URLs that expire mid-track (e.g. after a long pause).
     pub fn spawn(
         runtime: tokio::runtime::Handle,
         http: reqwest::Client,
         output: Output,
         config: PlayerConfig,
+        refresher: Option<UrlRefresher>,
         events: UnboundedSender<PlayerEvent>,
     ) -> Result<Self, PlayerError> {
         let (tx, rx) = mpsc::channel();
@@ -202,6 +206,7 @@ impl PlayerHandle {
                     http,
                     player,
                     stream: config.stream,
+                    refresher,
                     pcm_buffer: config.pcm_buffer,
                     engine: engine_tx,
                 });

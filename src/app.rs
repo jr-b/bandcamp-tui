@@ -9,9 +9,10 @@ use std::sync::Arc;
 
 use ratatui::widgets::TableState;
 
+use crate::art::Art;
 use crate::bandcamp::{
-    Album, BandId, Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, Filters, ItemId, Slice,
-    TralbumKind,
+    Album, ArtId, BandId, Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, Filters, ItemId,
+    Slice, TralbumKind,
 };
 use crate::picker::{Picker, PickerKind};
 use crate::player::{PlaybackState, PlayerEvent, QueueTrack, Status};
@@ -22,6 +23,8 @@ const LOAD_MORE_THRESHOLD: usize = 10;
 /// Stop paging after this many releases to keep memory bounded.
 pub const MAX_ITEMS: usize = 1000;
 const ALBUM_CACHE_SIZE: usize = 64;
+/// Encoded covers are ~10–50 KB each depending on the protocol.
+const ART_CACHE_SIZE: usize = 16;
 const VOLUME_STEP: f32 = 0.05;
 const SEEK_STEP_MS: i64 = 10_000;
 
@@ -43,6 +46,10 @@ pub enum Action {
     FocusAlbum,
     /// Album pane: switch between the tracklist and the about/credits/bio text.
     ToggleInfo,
+    /// Open the selected release (or album pane's album) on bandcamp.com.
+    OpenInBrowser,
+    ShowHelp,
+    CloseHelp,
     TogglePause,
     NextTrack,
     PreviousTrack,
@@ -74,6 +81,10 @@ pub enum Action {
         /// Boxed: an `Album` is much larger than every other action.
         result: Result<Box<Album>, String>,
     },
+    ArtLoaded {
+        id: ArtId,
+        result: Result<Art, String>,
+    },
     Player {
         event: Option<PlayerEvent>,
         status: Status,
@@ -95,7 +106,10 @@ pub enum Effect {
         id: ItemId,
         kind: TralbumKind,
     },
+    /// Download and encode a cover (only when art is enabled).
+    FetchArt(ArtId),
     Player(PlayerCommand),
+    OpenUrl(url::Url),
     /// Remember filters and volume for next time.
     SaveSettings(Settings),
 }
@@ -173,6 +187,8 @@ pub struct Message {
     pub text: String,
 }
 
+// Independent flags (player present, art on, help open, quitting), not a state machine.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 pub struct App {
     pub query: DiscoverQuery,
@@ -185,10 +201,18 @@ pub struct App {
     pub album_pane: AlbumPane,
     /// Open filter popup, if any. While open it gets all keys.
     pub picker: Option<Picker>,
-    albums: AlbumCache,
+    albums: Lru<ItemId, Arc<Album>>,
+    /// Whether the terminal shows cover art (decided once at startup).
+    pub art_enabled: bool,
+    arts: Lru<ArtId, Art>,
+    art_requests: HashSet<ArtId>,
+    art_failed: HashSet<ArtId>,
     /// Album requests in flight, so we never fetch the same release twice at once.
     album_requests: HashSet<ItemId>,
     album_errors: HashMap<ItemId, String>,
+    /// Albums whose expired stream URLs we've already re-fetched once since playback last
+    /// worked; a second expiry is reported instead of retried, so we can't loop.
+    refetched_for_expiry: HashSet<ItemId>,
     /// Release the user asked to play while its details were still loading: (id, track).
     pending_play: Option<(ItemId, usize)>,
     /// The album the player's queue was built from.
@@ -197,6 +221,7 @@ pub struct App {
     pub player_available: bool,
     pub message: Option<Message>,
     pub should_quit: bool,
+    pub show_help: bool,
 }
 
 impl App {
@@ -211,15 +236,21 @@ impl App {
             focus: Focus::Discover,
             album_pane: AlbumPane::default(),
             picker: None,
-            albums: AlbumCache::new(ALBUM_CACHE_SIZE),
+            albums: Lru::new(ALBUM_CACHE_SIZE),
+            art_enabled: false,
+            arts: Lru::new(ART_CACHE_SIZE),
+            art_requests: HashSet::new(),
+            art_failed: HashSet::new(),
             album_requests: HashSet::new(),
             album_errors: HashMap::new(),
+            refetched_for_expiry: HashSet::new(),
             pending_play: None,
             now_playing: None,
             player: Status::default(),
             player_available,
             message: None,
             should_quit: false,
+            show_help: false,
         };
         if !player_available {
             app.error("No audio output available; browsing only.");
@@ -317,6 +348,21 @@ impl App {
                 self.album_pane.info_scroll = 0;
                 vec![]
             }
+            Action::OpenInBrowser => match self.selected().map(|i| i.url.clone()) {
+                Some(url) => {
+                    self.info(format!("Opening {url}"));
+                    vec![Effect::OpenUrl(url)]
+                }
+                None => vec![],
+            },
+            Action::ShowHelp => {
+                self.show_help = true;
+                vec![]
+            }
+            Action::CloseHelp => {
+                self.show_help = false;
+                vec![]
+            }
             Action::TogglePause => self.player_command(PlayerCommand::TogglePause),
             Action::NextTrack => self.player_command(PlayerCommand::Next),
             Action::PreviousTrack => self.player_command(PlayerCommand::Previous),
@@ -349,6 +395,7 @@ impl App {
             }
             Action::AlbumDue(id) => self.album_due(id),
             Action::AlbumLoaded { id, result } => self.album_loaded(id, result),
+            Action::ArtLoaded { id, result } => self.art_loaded(id, result),
             Action::Player { event, status } => self.player_update(event, status),
         }
     }
@@ -513,14 +560,49 @@ impl App {
     /// Called whenever the discover selection moves to another release.
     fn selection_changed(&mut self) -> Option<Effect> {
         self.sync_album_pane();
-        let id = self.selected()?.id;
-        if self.albums.peek(id).is_some()
-            || self.album_requests.contains(&id)
-            || self.album_errors.contains_key(&id)
-        {
+        let item = self.selected()?;
+        let id = item.id;
+        let needs_album = self.albums.peek(id).is_none()
+            && !self.album_requests.contains(&id)
+            && !self.album_errors.contains_key(&id);
+        let needs_art = item.art_id.is_some_and(|art| self.needs_art(art));
+        (needs_album || needs_art).then_some(Effect::DebounceAlbum(id))
+    }
+
+    fn needs_art(&self, id: ArtId) -> bool {
+        self.art_enabled
+            && self.arts.peek(id).is_none()
+            && !self.art_requests.contains(&id)
+            && !self.art_failed.contains(&id)
+    }
+
+    fn fetch_art(&mut self, id: Option<ArtId>) -> Option<Effect> {
+        let id = id.filter(|&id| self.needs_art(id))?;
+        self.art_requests.insert(id);
+        Some(Effect::FetchArt(id))
+    }
+
+    /// Cover art for the album pane: `None` when there's none to show (disabled, no art, or
+    /// it failed), `Some(None)` while loading.
+    #[must_use]
+    pub fn art_for(&self, id: Option<ArtId>) -> Option<Option<&Art>> {
+        let id = id.filter(|_| self.art_enabled)?;
+        if self.art_failed.contains(&id) {
             return None;
         }
-        Some(Effect::DebounceAlbum(id))
+        Some(self.arts.peek(id))
+    }
+
+    fn art_loaded(&mut self, id: ArtId, result: Result<Art, String>) -> Vec<Effect> {
+        self.art_requests.remove(&id);
+        match result {
+            Ok(art) => self.arts.insert(id, art),
+            Err(e) => {
+                tracing::info!(%id, error = %e, "cover art unavailable");
+                self.art_failed.insert(id);
+            }
+        }
+        vec![]
     }
 
     /// Resets the tracklist when the album pane starts showing a different release.
@@ -542,10 +624,13 @@ impl App {
 
     fn album_due(&mut self, id: ItemId) -> Vec<Effect> {
         // Only fetch if the user is still on that release.
-        if self.selected().map(|i| i.id) != Some(id) {
+        let Some(item) = self.selected().filter(|i| i.id == id) else {
             return vec![];
-        }
-        self.fetch_album(id).into_iter().collect()
+        };
+        let art_id = item.art_id;
+        let mut effects: Vec<Effect> = self.fetch_album(id).into_iter().collect();
+        effects.extend(self.fetch_art(art_id));
+        effects
     }
 
     fn fetch_album(&mut self, id: ItemId) -> Option<Effect> {
@@ -657,8 +742,22 @@ impl App {
     fn player_update(&mut self, event: Option<PlayerEvent>, status: Status) -> Vec<Effect> {
         let track_changed = status.index != self.player.index;
         self.player = status;
+        if self.player.state == PlaybackState::Playing {
+            self.refetched_for_expiry.clear();
+        }
         match event {
-            Some(PlayerEvent::TrackFailed { index, message }) => {
+            Some(PlayerEvent::TrackFailed {
+                index,
+                expired: true,
+                ..
+            }) if self
+                .now_playing
+                .as_ref()
+                .is_some_and(|a| !self.refetched_for_expiry.contains(&a.id)) =>
+            {
+                return self.refetch_expired(index);
+            }
+            Some(PlayerEvent::TrackFailed { index, message, .. }) => {
                 let title = self
                     .now_playing
                     .as_ref()
@@ -679,6 +778,25 @@ impl App {
             self.album_pane.tracks.select(Some(index));
         }
         vec![]
+    }
+
+    /// Stream URLs are signed for about a day; re-fetch the album for fresh ones and resume at
+    /// the track that failed.
+    fn refetch_expired(&mut self, index: usize) -> Vec<Effect> {
+        let Some(album) = self.now_playing.take() else {
+            return vec![];
+        };
+        tracing::info!(album = %album.id, "stream URLs expired; re-fetching album");
+        self.refetched_for_expiry.insert(album.id);
+        self.albums.remove(album.id);
+        self.album_requests.insert(album.id);
+        self.pending_play = Some((album.id, index));
+        self.info("Stream links expired; refreshing…");
+        vec![Effect::FetchAlbum {
+            band_id: album.band.id,
+            id: album.id,
+            kind: album.kind,
+        }]
     }
 
     fn player_command(&mut self, command: PlayerCommand) -> Vec<Effect> {
@@ -727,6 +845,7 @@ impl Action {
                 | Self::DiscoverLoaded { .. }
                 | Self::AlbumDue(_)
                 | Self::AlbumLoaded { .. }
+                | Self::ArtLoaded { .. }
                 | Self::Player { .. }
         )
     }
@@ -746,42 +865,44 @@ fn page(rows: usize) -> isize {
     isize::try_from(rows.saturating_sub(1).max(1)).unwrap_or(isize::MAX)
 }
 
-/// Least-recently-used cache of album details (metadata only, a few KB each).
+/// Small least-recently-used cache: album details (a few KB each) and encoded cover art.
 #[derive(Debug)]
-struct AlbumCache {
+struct Lru<K, V> {
     capacity: usize,
-    map: HashMap<ItemId, Arc<Album>>,
+    map: HashMap<K, V>,
     /// Most recently used at the back.
-    order: VecDeque<ItemId>,
+    order: VecDeque<K>,
 }
 
-impl AlbumCache {
+impl<K: Copy + Eq + std::hash::Hash, V: Clone> Lru<K, V> {
+    /// Allocates nothing until the first insert, so an unused cache (e.g. art while it's
+    /// disabled) costs nothing.
     fn new(capacity: usize) -> Self {
         Self {
             capacity,
-            map: HashMap::with_capacity(capacity),
-            order: VecDeque::with_capacity(capacity),
+            map: HashMap::new(),
+            order: VecDeque::new(),
         }
     }
 
     /// Looks up without counting as a use (for rendering).
-    fn peek(&self, id: ItemId) -> Option<&Arc<Album>> {
-        self.map.get(&id)
+    fn peek(&self, key: K) -> Option<&V> {
+        self.map.get(&key)
     }
 
     /// Looks up and marks as recently used.
-    fn get(&mut self, id: ItemId) -> Option<Arc<Album>> {
-        let album = self.map.get(&id)?.clone();
-        self.touch(id);
-        Some(album)
+    fn get(&mut self, key: K) -> Option<V> {
+        let value = self.map.get(&key)?.clone();
+        self.touch(key);
+        Some(value)
     }
 
-    fn insert(&mut self, id: ItemId, album: Arc<Album>) {
-        if self.map.insert(id, album).is_some() {
-            self.touch(id);
+    fn insert(&mut self, key: K, value: V) {
+        if self.map.insert(key, value).is_some() {
+            self.touch(key);
             return;
         }
-        self.order.push_back(id);
+        self.order.push_back(key);
         if self.order.len() > self.capacity
             && let Some(oldest) = self.order.pop_front()
         {
@@ -789,10 +910,16 @@ impl AlbumCache {
         }
     }
 
-    fn touch(&mut self, id: ItemId) {
-        if let Some(pos) = self.order.iter().position(|&i| i == id) {
+    fn remove(&mut self, key: K) {
+        if self.map.remove(&key).is_some() {
+            self.order.retain(|&k| k != key);
+        }
+    }
+
+    fn touch(&mut self, key: K) {
+        if let Some(pos) = self.order.iter().position(|&k| k == key) {
             self.order.remove(pos);
-            self.order.push_back(id);
+            self.order.push_back(key);
         }
     }
 }
@@ -1134,6 +1261,127 @@ mod tests {
     }
 
     #[test]
+    fn expired_stream_urls_refetch_the_album_once() {
+        let mut app = with_album();
+        app.update(Action::Play);
+        let id = app.now_playing.as_ref().unwrap().id;
+        let expired = |index| Action::Player {
+            event: Some(PlayerEvent::TrackFailed {
+                index,
+                message: "HTTP 403".into(),
+                expired: true,
+            }),
+            status: Status::default(),
+        };
+
+        let effects = app.update(expired(3));
+        assert!(
+            matches!(&effects[..], [Effect::FetchAlbum { id: fetched, .. }] if *fetched == id),
+            "{effects:?}"
+        );
+        assert!(app.message.as_ref().unwrap().text.contains("expired"));
+        // Fresh details arrive: resume at the track that failed, with a new queue.
+        let effects = app.update(Action::AlbumLoaded {
+            id,
+            result: Ok(album_fixture("album")),
+        });
+        assert!(
+            matches!(
+                &effects[..],
+                [Effect::Player(PlayerCommand::PlayQueue(_, 3))]
+            ),
+            "{effects:?}"
+        );
+
+        // Expiring again before anything played: report it rather than loop.
+        assert_eq!(app.update(expired(3)), []);
+        assert_eq!(app.message.as_ref().unwrap().kind, MessageKind::Error);
+
+        // Once playback works again, a later expiry is retried again.
+        app.update(Action::Play);
+        app.update(Action::Player {
+            event: None,
+            status: Status {
+                state: PlaybackState::Playing,
+                index: Some(0),
+                ..Status::default()
+            },
+        });
+        assert!(matches!(
+            app.update(expired(0))[..],
+            [Effect::FetchAlbum { .. }]
+        ));
+    }
+
+    #[test]
+    fn open_in_browser_uses_the_selected_release() {
+        let mut app = loaded();
+        app.update(Action::Down);
+        let effects = app.update(Action::OpenInBrowser);
+        assert!(
+            matches!(&effects[..], [Effect::OpenUrl(url)] if url.as_str()
+                == "https://n4records.bandcamp.com/album/pete-cannon-from-the-manor-house-n4lp001"),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn art_is_fetched_with_details_only_when_enabled() {
+        // Disabled (the default): no art effects at all.
+        let mut app = loaded();
+        let id = app.selected().unwrap().id;
+        assert!(matches!(
+            app.update(Action::AlbumDue(id))[..],
+            [Effect::FetchAlbum { .. }]
+        ));
+
+        let mut app = loaded();
+        app.art_enabled = true;
+        let item = app.selected().unwrap().clone();
+        let art_id = item.art_id.unwrap();
+        assert_eq!(app.art_for(Some(art_id)), Some(None), "loading");
+        let effects = app.update(Action::AlbumDue(item.id));
+        assert!(
+            matches!(&effects[..], [Effect::FetchAlbum { .. }, Effect::FetchArt(a)] if *a == art_id),
+            "{effects:?}"
+        );
+        let art = crate::art::encode(
+            &ratatui_image::picker::Picker::halfblocks(),
+            &crate::art::tests::test_jpeg(),
+        )
+        .unwrap();
+        app.update(Action::ArtLoaded {
+            id: art_id,
+            result: Ok(art.clone()),
+        });
+        assert_eq!(app.art_for(Some(art_id)), Some(Some(&art)));
+
+        // Leaving and coming back: details and art are cached, nothing to fetch.
+        app.update(Action::AlbumLoaded {
+            id: item.id,
+            result: Ok(album_fixture("album")),
+        });
+        app.update(Action::Down);
+        assert!(matches!(app.update(Action::Up)[..], []));
+    }
+
+    #[test]
+    fn failed_art_falls_back_to_text_and_isnt_retried() {
+        let mut app = loaded();
+        app.art_enabled = true;
+        let item = app.selected().unwrap().clone();
+        let art_id = item.art_id.unwrap();
+        app.update(Action::AlbumDue(item.id));
+        app.update(Action::ArtLoaded {
+            id: art_id,
+            result: Err("404".into()),
+        });
+        assert_eq!(app.art_for(Some(art_id)), None);
+        assert!(app.fetch_art(Some(art_id)).is_none());
+        assert_eq!(app.art_for(None), None, "releases without art have none");
+    }
+
+    #[test]
     fn transport_keys_do_nothing_until_something_plays() {
         let mut app = loaded();
         assert_eq!(app.update(Action::TogglePause), []);
@@ -1176,7 +1424,7 @@ mod tests {
 
     #[test]
     fn album_cache_evicts_least_recently_used() {
-        let mut cache = AlbumCache::new(2);
+        let mut cache: Lru<ItemId, Arc<Album>> = Lru::new(2);
         let album: Arc<Album> = Arc::from(album_fixture("album"));
         cache.insert(ItemId(1), Arc::clone(&album));
         cache.insert(ItemId(2), Arc::clone(&album));

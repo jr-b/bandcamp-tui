@@ -12,7 +12,8 @@ streaming full albums. No account or login needed.
   in about 30 MB of memory and well under 1 % CPU
 - Album and artist info, tracklists, play from any track
 - Keyboard-driven, with vim and arrow keys; remembers your filters and volume
-- Planned: cover art on terminals that support kitty, iTerm2 or sixel graphics
+- Cover art on terminals with kitty, iTerm2 or sixel graphics (text-only everywhere else)
+- Recovers by itself when Bandcamp's stream links expire (they're signed for about a day)
 
 ## Building
 
@@ -49,6 +50,8 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `+` / `-` | volume |
 | `tab`, `h` / `l` | switch pane |
 | `i` | album about / credits / artist bio |
+| `o` | open the release on bandcamp.com (to buy it) |
+| `?` | all keys |
 | `f` / `t` / `L` | pick genre or tag / time range / location |
 | `s` | cycle best-selling / new arrivals / surprise me |
 | `r` | refresh |
@@ -57,10 +60,22 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 Filters and volume are remembered in `state.toml`, next to the log file
 (`~/Library/Application Support/bandcamp-tui/` on macOS, `~/.local/share/bandcamp-tui/` on Linux).
 
-## Album art and tmux
+## Configuration
 
-Album art is detected automatically. Inside tmux it's off by default. To enable it, set
-`album_art = "on"` in the config and add this to `~/.tmux.conf`:
+Optional. `config.toml` lives in `~/Library/Application Support/bandcamp-tui/` on macOS and
+`~/.config/bandcamp-tui/` on Linux (or pass `--config PATH`). Mistakes are reported at startup.
+
+```toml
+# Cover art: "auto" (default), "on" or "off". Same as --no-art when "off".
+album_art = "auto"
+```
+
+### Album art and tmux
+
+With `auto`, cover art appears when the terminal answers that it supports kitty, iTerm2 or
+sixel graphics (kitty, Ghostty, WezTerm, iTerm2, foot, recent Konsole and Windows Terminal).
+Other terminals get the text-only layout. Inside tmux it's off by default; to enable it, set
+`album_art = "on"` and add this to `~/.tmux.conf`:
 
 ```
 set -g allow-passthrough on

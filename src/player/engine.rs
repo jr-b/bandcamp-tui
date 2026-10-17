@@ -28,6 +28,8 @@ pub(crate) enum Msg {
     Failed {
         id: u64,
         message: String,
+        /// The track URL expired; skipping ahead won't help (the others are expired too).
+        expired: bool,
     },
 }
 
@@ -79,7 +81,11 @@ impl Engine {
             match msg {
                 Ok(Msg::Command(command)) => self.handle(command),
                 Ok(Msg::Ready) | Err(RecvTimeoutError::Timeout) => {}
-                Ok(Msg::Failed { id, message }) => self.on_failed(id, message),
+                Ok(Msg::Failed {
+                    id,
+                    message,
+                    expired,
+                }) => self.on_failed(id, message, expired),
                 Err(RecvTimeoutError::Disconnected) => break,
             }
             self.tick();
@@ -103,6 +109,7 @@ impl Engine {
                 Some(_) => self.emit(PlayerEvent::TrackFailed {
                     index,
                     message: "track is not available for streaming".into(),
+                    expired: false,
                 }),
                 None => {}
             },
@@ -186,7 +193,7 @@ impl Engine {
         }
     }
 
-    fn on_failed(&mut self, id: u64, message: String) {
+    fn on_failed(&mut self, id: u64, message: String, expired: bool) {
         if self.next.as_ref().is_some_and(|(_, p)| p.id == id) {
             // It will be retried, and reported if it fails again, when it's due to play.
             tracing::warn!(%message, "preloading next track failed");
@@ -194,11 +201,24 @@ impl Engine {
             return;
         }
         if self.current.as_ref().is_some_and(|p| p.id == id) {
-            if let Some(index) = self.index {
-                self.emit(PlayerEvent::TrackFailed { index, message });
+            let index = self.index;
+            if expired {
+                // Every URL in the queue came from the same response, so they've all expired:
+                // stop and let the app fetch fresh ones instead of failing through the album.
+                self.stop();
+            } else {
+                self.current = None;
             }
-            self.current = None;
-            self.on_track_end();
+            if let Some(index) = index {
+                self.emit(PlayerEvent::TrackFailed {
+                    index,
+                    message,
+                    expired,
+                });
+            }
+            if !expired {
+                self.on_track_end();
+            }
         }
     }
 
