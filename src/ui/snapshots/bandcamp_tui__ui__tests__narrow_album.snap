@@ -1,0 +1,20 @@
+---
+source: src/ui/mod.rs
+expression: "render(&mut app, 70, 16).backend()"
+---
+" bandcamp  Discover · electronic · best-selling    1,947,113 releases "
+"┌ Album ──────────────────────────────────────────────────── i about ┐"
+"│Ocean Company                                                       │"
+"│by Ocean Company · on Hotel Pools · label Stratford Ct.             │"
+"│10 tracks · 38 min · released 16 Oct 2026 · Portland, Oregon        │"
+"│#electronic #chill #chillsynth #chillwave #electro #instrumental #v…│"
+"│────────────────────────────────────────────────────────────────────│"
+"│    1 Awake                                                     3:42│"
+"│    2 Joyride                                                   3:50│"
+"│    3 Passage                                                   3:31│"
+"│    4 Balance                                                   4:00│"
+"└────────────────────────────────────────────────────────────────────┘"
+" Now playing ─────────────────────────────────────────────────────────"
+" Nothing playing. Select a release and press ⏎.                       "
+"                                                                      "
+" ⏎ play  space pause  tab pane  q quit  n/p track  ←→ seek  +/- volume"

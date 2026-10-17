@@ -8,7 +8,7 @@ use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
 use crate::app::{Action, App, Effect, PlayerCommand};
 use crate::bandcamp::{BandcampClient, DiscoverQuery};
@@ -18,6 +18,8 @@ use crate::player::{PlayerEvent, PlayerHandle};
 
 /// How often the progress bar updates while playing. Nothing ticks when paused or idle.
 const PROGRESS_TICK: Duration = Duration::from_millis(250);
+/// Wait this long after the selection stops moving before loading release details.
+const ALBUM_DEBOUNCE: Duration = Duration::from_millis(250);
 
 pub struct Services {
     pub client: BandcampClient,
@@ -50,7 +52,9 @@ pub async fn run(
         player: player.clone(),
         results: results_tx,
     };
-    executor.run(effects);
+    // At most one pending debounced album load: (when, which).
+    let mut album_due: Option<(Instant, crate::bandcamp::ItemId)> = None;
+    executor.run(effects, &mut album_due);
 
     let mut input = EventStream::new();
     let mut ticker = tokio::time::interval(PROGRESS_TICK);
@@ -75,6 +79,9 @@ pub async fn run(
                 event: Some(event),
                 status: player.as_ref().map(PlayerHandle::status).unwrap_or_default(),
             }),
+            () = sleep_until_due(album_due), if album_due.is_some() => {
+                album_due.take().map(|(_, id)| Action::AlbumDue(id))
+            },
             _ = ticker.tick(), if app.is_playing() => player.as_ref().and_then(|p| {
                 // Skip the redraw unless something visible changed (the clock shows whole
                 // seconds), which cuts redraws from 4/s to 1/s while playing.
@@ -87,7 +94,7 @@ pub async fn run(
         };
         if let Some(action) = action {
             let effects = app.update(action);
-            executor.run(effects);
+            executor.run(effects, &mut album_due);
             dirty = true;
         }
         if app.should_quit {
@@ -98,6 +105,12 @@ pub async fn run(
         player.stop();
     }
     Ok(())
+}
+
+async fn sleep_until_due(due: Option<(Instant, crate::bandcamp::ItemId)>) {
+    if let Some((when, _)) = due {
+        tokio::time::sleep_until(when).await;
+    }
 }
 
 fn visibly_changed(old: &crate::player::Status, new: &crate::player::Status) -> bool {
@@ -114,9 +127,16 @@ struct Executor {
 }
 
 impl Executor {
-    fn run(&self, effects: Vec<Effect>) {
+    fn run(
+        &self,
+        effects: Vec<Effect>,
+        album_due: &mut Option<(Instant, crate::bandcamp::ItemId)>,
+    ) {
         for effect in effects {
             match effect {
+                Effect::DebounceAlbum(id) => {
+                    *album_due = Some((Instant::now() + ALBUM_DEBOUNCE, id));
+                }
                 Effect::FetchDiscover {
                     query,
                     cursor,
@@ -133,6 +153,7 @@ impl Executor {
                     });
                 }
                 Effect::FetchAlbum { band_id, id, kind } => {
+                    tracing::debug!(%id, "fetching album details");
                     let client = self.client.clone();
                     let tx = self.results.clone();
                     tokio::spawn(async move {
@@ -157,6 +178,7 @@ impl Executor {
 fn apply(player: &PlayerHandle, command: PlayerCommand) {
     match command {
         PlayerCommand::PlayQueue(queue, start) => player.play_queue(queue, start),
+        PlayerCommand::PlayIndex(index) => player.play(index),
         PlayerCommand::TogglePause => player.toggle_pause(),
         PlayerCommand::Next => player.next(),
         PlayerCommand::Previous => player.previous(),

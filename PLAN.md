@@ -126,7 +126,8 @@ src/
   app.rs             # App state, Action, Effect, pure `update` (unit-tested)
   run.rs             # event loop: input/API/player → Action → update → Effects; redraw on change
   input.rs           # key bindings → Action
-  ui.rs              # draw(frame, &mut App); insta snapshot tests  (split into ui/ in M5)
+  ui/                # draw(frame, &mut App): mod.rs (layout, header, footer, snapshot tests),
+                     #   discover.rs, album.rs, now_playing.rs
   format.rs          # durations, prices, thousands, ellipsis truncation
   bandcamp/          # API client (M2): discover, album, filters, images, types, error
   player/            # streaming player (M3): engine, pipeline, http_source, segment
@@ -306,8 +307,8 @@ Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 |----------------------|----------------------------------------------------|
 | `j/k`, `↓/↑`         | move selection                                     |
 | `g/G`, `Home/End`    | top / bottom; `PgUp/PgDn`, `Ctrl-u/d` page          |
-| `Tab` / `h/l`        | switch pane                                        |
-| `Enter`              | album list: play album from track 1; tracklist: play that track |
+| `Tab` / `h/l`        | switch pane (narrow terminals show only the focused pane) |
+| `Enter`              | album list: play album from track 1; tracklist: play that track (jumps within the queue if it's the same album) |
 | `Space`              | play/pause                                         |
 | `n` / `p`            | next / previous track                              |
 | `←/→` or `,`/`.`     | seek −/+10s                                        |
@@ -335,7 +336,7 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
    measure the §2.2 budget here, before any UI exists.
 4. ✅ **TUI skeleton.** Terminal init/restore (including on panic), event loop, discover list
    with infinite scroll, and the now-playing bar.
-5. **Album pane.** Metadata, tracklist, play album/track, auto-advance, prefetch, greyed-out
+5. ✅ **Album pane.** Metadata, tracklist, play album/track, auto-advance, prefetch, greyed-out
    unstreamable tracks.
 6. **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
 7. **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
