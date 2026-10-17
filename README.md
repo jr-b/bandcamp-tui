@@ -10,6 +10,7 @@ streaming full albums. No account or login needed.
 - Browse Discover by genre/tag, best-selling / new / surprise-me, time period and location
 - Stream full albums (128 kbps MP3, the same quality as the website) with gapless track changes,
   in about 30 MB of memory and well under 1 % CPU
+- Search artists, albums and tracks (`/`), and browse an artist's whole discography
 - Album and artist info, tracklists, play from any track
 - Autoplay: when an album ends, the next Discover release starts (toggle with `a`)
 - Keyboard-driven, with vim and arrow keys; remembers your filters and volume
@@ -54,6 +55,7 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `i` | album about / credits / artist bio |
 | `o` | open the release on bandcamp.com (to buy it) |
 | `?` | all keys |
+| `/` | search artists, albums and tracks (`esc` returns to Discover) |
 | `f` / `t` / `L` | pick genre or tag / time range / location |
 | `s` | cycle best-selling / new arrivals / surprise me |
 | `r` | refresh |

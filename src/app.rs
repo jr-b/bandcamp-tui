@@ -7,12 +7,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use ratatui::widgets::TableState;
+use ratatui::widgets::{ListState, TableState};
 
 use crate::art::Art;
 use crate::bandcamp::{
-    Album, ArtId, BandId, Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, Filters, ItemId,
-    Slice, TralbumKind,
+    Album, ArtId, Artist, BandId, Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, Filters,
+    ItemId, SearchResult, Slice, TralbumKind,
 };
 use crate::picker::{Picker, PickerKind};
 use crate::player::{PlaybackState, PlayerEvent, QueueTrack, Status};
@@ -50,6 +50,21 @@ pub enum Action {
     ToggleInfo,
     /// Continue with the next Discover release when an album ends.
     ToggleAutoplay,
+    /// Open the search box (`/`).
+    OpenSearch,
+    /// Leave search results or an artist's releases and return to Discover.
+    BackToDiscover,
+    /// The debounce delay for search `generation` has passed.
+    SearchDue(u64),
+    SearchLoaded {
+        generation: u64,
+        result: Result<Vec<SearchResult>, String>,
+    },
+    ArtistLoaded {
+        band_id: BandId,
+        /// Boxed: a discography can be large.
+        result: Result<Box<Artist>, String>,
+    },
     /// Open the selected release (or album pane's album) on bandcamp.com.
     OpenInBrowser,
     ShowHelp,
@@ -67,11 +82,11 @@ pub enum Action {
     CycleSlice,
     OpenPicker(PickerKind),
     /// Close the picker without changing anything.
-    ClosePicker,
+    ClosePopup,
     /// Text typed into the picker's search.
-    PickerInput(char),
-    PickerBackspace,
-    PickerClear,
+    TypeChar(char),
+    Backspace,
+    ClearInput,
     /// Terminal resized; just redraw.
     Resize,
     DiscoverLoaded {
@@ -112,6 +127,13 @@ pub enum Effect {
     },
     /// Download and encode a cover (only when art is enabled).
     FetchArt(ArtId),
+    /// Send [`Action::SearchDue`] after a short delay, replacing any pending one.
+    DebounceSearch(u64),
+    FetchSearch {
+        query: String,
+        generation: u64,
+    },
+    FetchArtist(BandId),
     Player(PlayerCommand),
     OpenUrl(url::Url),
     /// Remember filters and volume for next time.
@@ -156,6 +178,35 @@ impl DiscoverList {
     }
 }
 
+/// What the release list is showing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ListSource {
+    #[default]
+    Discover,
+    /// Album and track results for this query.
+    Search(String),
+    /// An artist's or label's releases.
+    Artist(String),
+}
+
+/// The `/` search popup. Kept while closed, so reopening shows the last search.
+#[derive(Debug, Default)]
+pub struct SearchBox {
+    pub query: String,
+    pub results: Vec<SearchResult>,
+    pub list: ListState,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// Bumped on every edit so only the latest query's results are shown.
+    generation: u64,
+}
+
+impl SearchBox {
+    fn selected(&self) -> Option<&SearchResult> {
+        self.results.get(self.list.selected()?)
+    }
+}
+
 /// What the album pane knows about the release selected in the discover list.
 #[derive(Debug, Clone, Copy)]
 pub enum AlbumView<'a> {
@@ -196,7 +247,18 @@ pub struct Message {
 #[derive(Debug)]
 pub struct App {
     pub query: DiscoverQuery,
+    /// The release list on the left. Despite the name, it can hold search results or an
+    /// artist's releases too; `source` says which.
     pub discover: DiscoverList,
+    pub source: ListSource,
+    /// The Discover list (and its selection) while search results or an artist are shown.
+    saved_discover: Option<(DiscoverList, TableState)>,
+    pub search: SearchBox,
+    pub search_open: bool,
+    /// The artist whose releases are loading into the list.
+    pending_artist: Option<BandId>,
+    /// Source of unique list generations, shared by every list the left pane shows.
+    list_generation: u64,
     /// Selection and scroll offset of the discover table; the offset is maintained by rendering.
     pub table: TableState,
     /// Rows visible in the discover table, set while rendering; used for page up/down.
@@ -244,6 +306,12 @@ impl App {
         let mut app = Self {
             query,
             discover: DiscoverList::default(),
+            source: ListSource::Discover,
+            saved_discover: None,
+            search: SearchBox::default(),
+            search_open: false,
+            pending_artist: None,
+            list_generation: 0,
             table: TableState::default(),
             page_rows: 10,
             focus: Focus::Discover,
@@ -330,6 +398,11 @@ impl App {
         {
             return effects;
         }
+        if self.search_open
+            && let Some(effects) = self.search_update(&action)
+        {
+            return effects;
+        }
         match action {
             Action::Quit => {
                 self.should_quit = true;
@@ -366,6 +439,14 @@ impl App {
                 vec![]
             }
             Action::ToggleAutoplay => self.toggle_autoplay(),
+            Action::OpenSearch => {
+                self.search_open = true;
+                vec![]
+            }
+            Action::BackToDiscover => self.back_to_discover(),
+            Action::SearchDue(generation) => self.search_due(generation),
+            Action::SearchLoaded { generation, result } => self.search_loaded(generation, result),
+            Action::ArtistLoaded { band_id, result } => self.artist_loaded(band_id, result),
             Action::OpenInBrowser => self.open_in_browser(),
             Action::ShowHelp => {
                 self.show_help = true;
@@ -397,10 +478,10 @@ impl App {
             }
             // Picker keys with no picker open (handled above when one is), and resizes, which
             // only need a redraw.
-            Action::ClosePicker
-            | Action::PickerInput(_)
-            | Action::PickerBackspace
-            | Action::PickerClear
+            Action::ClosePopup
+            | Action::TypeChar(_)
+            | Action::Backspace
+            | Action::ClearInput
             | Action::Resize => vec![],
             Action::DiscoverLoaded { generation, result } => {
                 self.discover_loaded(generation, result)
@@ -425,10 +506,10 @@ impl App {
             Action::PageDown => picker.move_by(10),
             Action::Top => picker.move_by(isize::MIN),
             Action::Bottom => picker.move_by(isize::MAX),
-            Action::PickerInput(c) => picker.push(*c),
-            Action::PickerBackspace => picker.backspace(),
-            Action::PickerClear => picker.clear(),
-            Action::ClosePicker => self.picker = None,
+            Action::TypeChar(c) => picker.push(*c),
+            Action::Backspace => picker.backspace(),
+            Action::ClearInput => picker.clear(),
+            Action::ClosePopup => self.picker = None,
             Action::Play => {
                 let choice = picker.selected().cloned();
                 self.picker = None;
@@ -462,7 +543,11 @@ impl App {
 
     /// Starts a fresh discover load for the current query.
     fn reload(&mut self) -> Effect {
-        let generation = self.discover.generation + 1;
+        // Filters and refresh always mean Discover.
+        self.source = ListSource::Discover;
+        self.saved_discover = None;
+        self.pending_artist = None;
+        let generation = self.next_list_generation();
         self.discover = DiscoverList {
             loading: true,
             generation,
@@ -837,11 +922,206 @@ impl App {
     }
 
     fn open_in_browser(&mut self) -> Vec<Effect> {
-        let Some(url) = self.selected().map(|i| i.url.clone()) else {
+        let Some(item) = self.selected() else {
             return vec![];
         };
+        // Prefer the release's own page: artist discographies only give the artist's URL.
+        let url = self
+            .albums
+            .peek(item.id)
+            .map_or_else(|| item.url.clone(), |album| album.url.clone());
         self.info(format!("Opening {url}"));
         vec![Effect::OpenUrl(url)]
+    }
+
+    // ---- Search and artists --------------------------------------------------------------------
+
+    fn next_list_generation(&mut self) -> u64 {
+        self.list_generation += 1;
+        self.list_generation
+    }
+
+    /// Handles `action` while the search box is open; `None` means "handle normally".
+    fn search_update(&mut self, action: &Action) -> Option<Vec<Effect>> {
+        let len = self.search.results.len();
+        let mut edited = false;
+        match action {
+            Action::Up => move_list(&mut self.search.list, len, -1),
+            Action::Down => move_list(&mut self.search.list, len, 1),
+            Action::PageUp => move_list(&mut self.search.list, len, -10),
+            Action::PageDown => move_list(&mut self.search.list, len, 10),
+            Action::TypeChar(c) => {
+                self.search.query.push(*c);
+                edited = true;
+            }
+            Action::Backspace => {
+                edited = self.search.query.pop().is_some();
+            }
+            Action::ClearInput => {
+                edited = !self.search.query.is_empty();
+                self.search.query.clear();
+            }
+            Action::ClosePopup => self.search_open = false,
+            Action::Play => return Some(self.open_search_result()),
+            Action::Quit => return None,
+            _ if action.is_user_input() => {}
+            _ => return None,
+        }
+        if !edited {
+            return Some(vec![]);
+        }
+        self.search.generation += 1;
+        self.search.error = None;
+        if self.search.query.trim().is_empty() {
+            self.search.results.clear();
+            self.search.loading = false;
+            return Some(vec![]);
+        }
+        self.search.loading = true;
+        Some(vec![Effect::DebounceSearch(self.search.generation)])
+    }
+
+    fn search_due(&mut self, generation: u64) -> Vec<Effect> {
+        let query = self.search.query.trim();
+        if generation != self.search.generation || query.is_empty() {
+            return vec![];
+        }
+        vec![Effect::FetchSearch {
+            query: query.to_owned(),
+            generation,
+        }]
+    }
+
+    fn search_loaded(
+        &mut self,
+        generation: u64,
+        result: Result<Vec<SearchResult>, String>,
+    ) -> Vec<Effect> {
+        if generation != self.search.generation {
+            return vec![]; // The query changed since.
+        }
+        self.search.loading = false;
+        match result {
+            Ok(results) => {
+                self.search.results = results;
+                self.search.error = None;
+            }
+            Err(e) => {
+                self.search.results.clear();
+                self.search.error = Some(e);
+            }
+        }
+        self.search.list = ListState::default().with_selected(Some(0));
+        vec![]
+    }
+
+    /// `⏎` in the search box: a release opens all release results in the list; an artist
+    /// opens their discography.
+    fn open_search_result(&mut self) -> Vec<Effect> {
+        let Some(chosen) = self.search.selected().cloned() else {
+            return vec![];
+        };
+        self.search_open = false;
+        match chosen {
+            SearchResult::Release(item) => {
+                let releases: Vec<DiscoverItem> = self
+                    .search
+                    .results
+                    .iter()
+                    .filter_map(|r| match r {
+                        SearchResult::Release(item) => Some(item.clone()),
+                        SearchResult::Artist(_) => None,
+                    })
+                    .collect();
+                let index = releases.iter().position(|r| r.id == item.id);
+                let query = self.search.query.trim().to_owned();
+                self.show_list(ListSource::Search(query), releases, index, false)
+            }
+            SearchResult::Artist(artist) => {
+                self.pending_artist = Some(artist.band_id);
+                let mut effects =
+                    self.show_list(ListSource::Artist(artist.name), Vec::new(), None, true);
+                effects.push(Effect::FetchArtist(artist.band_id));
+                effects
+            }
+        }
+    }
+
+    fn artist_loaded(
+        &mut self,
+        band_id: BandId,
+        result: Result<Box<Artist>, String>,
+    ) -> Vec<Effect> {
+        if self.pending_artist != Some(band_id) {
+            return vec![]; // The user moved on.
+        }
+        self.pending_artist = None;
+        match result {
+            Ok(artist) => {
+                let artist = *artist;
+                self.show_list(
+                    ListSource::Artist(artist.name),
+                    artist.releases,
+                    Some(0),
+                    false,
+                )
+            }
+            Err(e) => {
+                self.discover.loading = false;
+                self.error(format!("Couldn't load artist: {e}"));
+                vec![]
+            }
+        }
+    }
+
+    /// Replaces the release list, keeping Discover aside to come back to.
+    fn show_list(
+        &mut self,
+        source: ListSource,
+        items: Vec<DiscoverItem>,
+        selected: Option<usize>,
+        loading: bool,
+    ) -> Vec<Effect> {
+        if self.source == ListSource::Discover {
+            let discover = std::mem::take(&mut self.discover);
+            let table = std::mem::take(&mut self.table);
+            self.saved_discover = Some((discover, table));
+        }
+        self.source = source;
+        self.autoplay_after = None;
+        let generation = self.next_list_generation();
+        self.discover = DiscoverList {
+            total: items.len() as u64,
+            items,
+            next_cursor: None,
+            loading,
+            generation,
+        };
+        let selected = selected.or((!self.discover.items.is_empty()).then_some(0));
+        self.table = TableState::default().with_selected(selected);
+        self.focus = Focus::Discover;
+        self.selection_changed().into_iter().collect()
+    }
+
+    /// `Esc`: back to Discover as it was, without reloading.
+    fn back_to_discover(&mut self) -> Vec<Effect> {
+        if self.source == ListSource::Discover {
+            return vec![];
+        }
+        self.source = ListSource::Discover;
+        self.pending_artist = None;
+        self.autoplay_after = None;
+        if let Some((mut discover, table)) = self.saved_discover.take() {
+            // A page that was loading may have been dropped while we were away.
+            discover.loading = false;
+            self.discover = discover;
+            self.table = table;
+            let mut effects: Vec<Effect> = self.selection_changed().into_iter().collect();
+            effects.extend(self.maybe_load_more());
+            effects
+        } else {
+            vec![self.reload()]
+        }
     }
 
     // ---- Autoplay ------------------------------------------------------------------------------
@@ -880,7 +1160,7 @@ impl App {
                 self.autoplay_after = self.discover.items.last().map(|i| i.id).or(after);
                 return vec![];
             }
-            self.info("Autoplay: that was the last release in Discover.");
+            self.info("Autoplay: that was the last release in this list.");
             return vec![];
         };
 
@@ -995,8 +1275,19 @@ impl Action {
                 | Self::AlbumDue(_)
                 | Self::AlbumLoaded { .. }
                 | Self::ArtLoaded { .. }
+                | Self::SearchDue(_)
+                | Self::SearchLoaded { .. }
+                | Self::ArtistLoaded { .. }
                 | Self::Player { .. }
         )
+    }
+}
+
+/// Moves a list selection by `delta`, clamped to `len` rows.
+fn move_list(list: &mut ListState, len: usize, delta: isize) {
+    if len > 0 {
+        let current = list.selected().unwrap_or(0);
+        list.select(Some(current.saturating_add_signed(delta).min(len - 1)));
     }
 }
 
@@ -1372,7 +1663,7 @@ mod tests {
         app.update(Action::Down);
         assert_eq!(app.table.selected(), Some(0));
         for c in "techno".chars() {
-            app.update(Action::PickerInput(c));
+            app.update(Action::TypeChar(c));
         }
         let effects = app.update(Action::Play);
         assert!(app.picker.is_none());
@@ -1390,8 +1681,8 @@ mod tests {
         app.update(Action::OpenPicker(PickerKind::Time));
         assert_eq!(app.update(Action::Play), [], "Any time is already selected");
         app.update(Action::OpenPicker(PickerKind::Location));
-        app.update(Action::PickerInput('b'));
-        assert_eq!(app.update(Action::ClosePicker), []);
+        app.update(Action::TypeChar('b'));
+        assert_eq!(app.update(Action::ClosePopup), []);
         assert!(app.picker.is_none());
         assert_eq!(app.query.geoname_id, 0);
     }
@@ -1716,6 +2007,201 @@ mod tests {
             effects,
             [],
             "a cancelled autoplay attempt doesn't skip onwards"
+        );
+    }
+
+    fn search_fixture() -> Vec<SearchResult> {
+        let json = include_str!("../tests/fixtures/search_aphex.json");
+        crate::bandcamp::parse_search(json).unwrap()
+    }
+
+    fn artist_fixture() -> Box<Artist> {
+        let json = include_str!("../tests/fixtures/band_aphex.json");
+        Box::new(crate::bandcamp::parse_artist(json).unwrap())
+    }
+
+    /// Opens search, types `text`, and lets the results arrive.
+    fn search_for(app: &mut App, text: &str) {
+        app.update(Action::OpenSearch);
+        let mut generation = 0;
+        for c in text.chars() {
+            let effects = app.update(Action::TypeChar(c));
+            let [Effect::DebounceSearch(g)] = effects[..] else {
+                panic!("{effects:?}");
+            };
+            generation = g;
+        }
+        let effects = app.update(Action::SearchDue(generation));
+        assert!(
+            matches!(&effects[..], [Effect::FetchSearch { query, .. }] if query == text),
+            "{effects:?}"
+        );
+        app.update(Action::SearchLoaded {
+            generation,
+            result: Ok(search_fixture()),
+        });
+    }
+
+    #[test]
+    fn search_is_debounced_and_ignores_stale_results() {
+        let mut app = loaded();
+        app.update(Action::OpenSearch);
+        let [Effect::DebounceSearch(first)] = app.update(Action::TypeChar('a'))[..] else {
+            panic!();
+        };
+        let [Effect::DebounceSearch(second)] = app.update(Action::TypeChar('p'))[..] else {
+            panic!();
+        };
+        assert_eq!(
+            app.update(Action::SearchDue(first)),
+            [],
+            "superseded by more typing"
+        );
+        assert!(app.search.loading);
+        // A late answer to the old query is dropped.
+        app.update(Action::SearchLoaded {
+            generation: first,
+            result: Ok(search_fixture()),
+        });
+        assert_eq!(app.search.results, []);
+        assert!(matches!(
+            app.update(Action::SearchDue(second))[..],
+            [Effect::FetchSearch { .. }]
+        ));
+        // Keys go to the box: `j` is text, not "move down".
+        app.update(Action::TypeChar('j'));
+        assert_eq!(app.search.query, "apj");
+        assert_eq!(app.table.selected(), Some(0));
+    }
+
+    #[test]
+    fn opening_a_release_shows_the_results_and_esc_restores_discover() {
+        let mut app = loaded();
+        app.update(Action::Down);
+        let discover_items = app.discover.items.len();
+        search_for(&mut app, "aphex twin");
+        assert_eq!(app.search.results.len(), 7);
+        // Results: artist, 4 albums, 2 tracks. Pick the second album (Syro).
+        app.update(Action::Down);
+        app.update(Action::Down);
+        let effects = app.update(Action::Play);
+        assert!(!app.search_open);
+        assert_eq!(app.source, ListSource::Search("aphex twin".into()));
+        assert_eq!(app.discover.items.len(), 6, "releases only, no artists");
+        assert_eq!(app.selected().unwrap().title, "Syro");
+        assert!(
+            matches!(&effects[..], [Effect::DebounceAlbum(id)] if *id == app.selected().unwrap().id),
+            "{effects:?}"
+        );
+        assert!(!app.discover.has_more(), "search has no more pages");
+
+        let effects = app.update(Action::BackToDiscover);
+        assert_eq!(app.source, ListSource::Discover);
+        assert_eq!(app.discover.items.len(), discover_items);
+        assert_eq!(app.table.selected(), Some(1), "selection restored");
+        assert!(
+            effects
+                .iter()
+                .all(|e| !matches!(e, Effect::FetchDiscover { cursor: None, .. }))
+        );
+    }
+
+    #[test]
+    fn opening_an_artist_lists_their_releases() {
+        let mut app = loaded();
+        search_for(&mut app, "aphex twin");
+        let effects = app.update(Action::Play); // the artist is first
+        let band_id = BandId(1_533_096_991);
+        assert_eq!(effects.last(), Some(&Effect::FetchArtist(band_id)));
+        assert_eq!(app.source, ListSource::Artist("Aphex Twin".into()));
+        assert!(app.discover.loading);
+
+        let effects = app.update(Action::ArtistLoaded {
+            band_id,
+            result: Ok(artist_fixture()),
+        });
+        assert_eq!(app.discover.items.len(), 5);
+        assert!(!app.discover.loading);
+        assert_eq!(app.selected().unwrap().title, "Drukqs");
+        assert!(
+            matches!(&effects[..], [Effect::DebounceAlbum(_)]),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_late_artist_page_is_ignored_after_leaving() {
+        let mut app = loaded();
+        search_for(&mut app, "aphex twin");
+        app.update(Action::Play);
+        app.update(Action::BackToDiscover);
+        let effects = app.update(Action::ArtistLoaded {
+            band_id: BandId(1_533_096_991),
+            result: Ok(artist_fixture()),
+        });
+        assert_eq!(effects, []);
+        assert_eq!(app.source, ListSource::Discover);
+    }
+
+    #[test]
+    fn changing_filters_leaves_search() {
+        let mut app = loaded();
+        search_for(&mut app, "aphex twin");
+        app.update(Action::Down);
+        app.update(Action::Play);
+        assert_ne!(app.source, ListSource::Discover);
+        let effects = app.update(Action::CycleSlice);
+        assert_eq!(app.source, ListSource::Discover);
+        assert!(matches!(
+            &effects[0],
+            Effect::FetchDiscover { cursor: None, .. }
+        ));
+        // Nothing saved to go back to any more.
+        assert_eq!(app.update(Action::BackToDiscover), []);
+    }
+
+    #[test]
+    fn reopening_search_keeps_the_last_query_and_esc_closes_it() {
+        let mut app = loaded();
+        search_for(&mut app, "aphex twin");
+        app.update(Action::ClosePopup);
+        assert!(!app.search_open);
+        assert_eq!(
+            app.source,
+            ListSource::Discover,
+            "closing doesn't change the list"
+        );
+        app.update(Action::OpenSearch);
+        assert_eq!(app.search.query, "aphex twin");
+        assert_eq!(app.search.results.len(), 7);
+        app.update(Action::ClearInput);
+        assert_eq!(app.search.results, []);
+    }
+
+    #[test]
+    fn open_in_browser_prefers_the_release_page_over_the_artist_page() {
+        let mut app = loaded();
+        search_for(&mut app, "aphex twin");
+        app.update(Action::Play);
+        app.update(Action::ArtistLoaded {
+            band_id: BandId(1_533_096_991),
+            result: Ok(artist_fixture()),
+        });
+        let item = app.selected().unwrap().clone();
+        // Discography entries only know the artist page...
+        assert!(
+            matches!(&app.update(Action::OpenInBrowser)[..], [Effect::OpenUrl(u)] if *u == item.url)
+        );
+        // ...until the release's details arrive with its own URL.
+        app.update(Action::AlbumDue(item.id));
+        let album = album_fixture("album");
+        let album_url = album.url.clone();
+        app.update(Action::AlbumLoaded {
+            id: item.id,
+            result: Ok(album),
+        });
+        assert!(
+            matches!(&app.update(Action::OpenInBrowser)[..], [Effect::OpenUrl(u)] if *u == album_url)
         );
     }
 

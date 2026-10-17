@@ -337,7 +337,7 @@ Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 | `o`                  | open album in browser (to buy it)                  |
 | `a`                  | autoplay on/off                                    |
 | `i`                  | toggle artist info (bio, location, credits)        |
-| `/`                  | search (stretch)                                   |
+| `/`                  | search artists/albums/tracks; `esc` back to Discover |
 | `q`, `Ctrl-C`        | quit (`Esc` deliberately doesn't quit; it closes popups) |
 
 Infinite scroll: when the selection gets within 10 items of the end and `cursor != null`, fetch the next page.
@@ -360,7 +360,7 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
 6. ✅ **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
 7. ✅ **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
    expiry, `o` to open in browser, and media keys / MPRIS (stretch, behind a `mpris` feature on Linux).
-8. **Stretch.** Search, play queue across albums. (✅ "Radio" mode shipped as autoplay.)
+8. **Stretch.** Play queue across albums. (✅ Search and "radio" mode (autoplay) shipped.)
 
 ### Polish (milestone 7)
 
@@ -386,7 +386,15 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
   that turn out unplayable or fail to load; it gives up after 5 in a row. At the end of the
   loaded list it fetches the next page and continues. The selection follows only if the user
   was still on the finished album. Choosing something yourself cancels a pending autoplay.
-* Not done (stretch): MPRIS/media keys, search, cross-album queue.
+* **Search** (`/`). A popup with live results as you type (debounced 250 ms; stale answers
+  dropped by generation) from `bcsearch_public_api/1/autocomplete_elastic`: up to 50 artists,
+  albums and tracks, no paging. `⏎` on a release replaces the left list with the search's
+  release results. `⏎` on an artist loads `mobile/25/band_details` and lists their
+  discography. The Discover list and selection are set aside and restored by `esc` without
+  reloading; changing a filter also returns to Discover. Album pane, play, autoplay, art and
+  `o` all work on these lists (`o` uses the album's own URL once loaded, since discography
+  entries only carry the artist page).
+* Not done (stretch): MPRIS/media keys, cross-album queue.
 
 ## 6. Best practices checklist
 

@@ -6,6 +6,7 @@ mod discover;
 mod help;
 mod now_playing;
 mod picker;
+mod search;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -13,7 +14,7 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, Focus, MessageKind};
+use crate::app::{App, Focus, ListSource, MessageKind};
 use crate::bandcamp::{Filters, Slice};
 use crate::format;
 use crate::input::{HINTS, PICKER_HINTS};
@@ -49,6 +50,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(picker) = app.picker.as_mut() {
         picker::draw(frame, body, picker);
     }
+    if app.search_open {
+        search::draw(frame, body, &mut app.search);
+    }
     if app.show_help {
         help::draw(frame, frame.area());
     }
@@ -75,26 +79,37 @@ fn slice_label(slice: Slice) -> &'static str {
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let mut left = vec![
-        Span::styled(
-            " bandcamp ",
-            Style::new().fg(Color::Black).bg(ACCENT).bold(),
-        ),
-        Span::raw(" Discover"),
-    ];
-    let mut parts = crate::picker::describe(Filters::snapshot(), &app.query);
-    parts.insert(1, slice_label(app.query.slice).to_owned());
+    let mut left = vec![Span::styled(
+        " bandcamp ",
+        Style::new().fg(Color::Black).bg(ACCENT).bold(),
+    )];
+    let parts = match &app.source {
+        ListSource::Discover => {
+            left.push(Span::raw(" Discover"));
+            let mut parts = crate::picker::describe(Filters::snapshot(), &app.query);
+            parts.insert(1, slice_label(app.query.slice).to_owned());
+            parts
+        }
+        ListSource::Search(query) => {
+            left.push(Span::raw(" Search"));
+            vec![format!("“{query}”")]
+        }
+        ListSource::Artist(name) => {
+            left.push(Span::raw(" Artist"));
+            vec![name.clone()]
+        }
+    };
     for part in parts {
         left.push(Span::styled(" · ", Style::new().dim()));
         left.push(Span::styled(part, Style::new().bold()));
     }
     let left = Line::from(left);
     let right = if app.discover.total > 0 {
-        Line::from(format!(
-            "{} releases ",
-            format::thousands(app.discover.total)
-        ))
-        .dim()
+        let mut text = format!("{} releases ", format::thousands(app.discover.total));
+        if app.source != ListSource::Discover {
+            text.push_str("· esc back ");
+        }
+        Line::from(text).dim()
     } else {
         Line::default()
     };
@@ -112,7 +127,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         Some(m) => Line::from(format!(" {}", m.text)).fg(ACCENT),
         None => {
             // Show as many whole hints as fit; they're ordered by importance.
-            let hints = if app.picker.is_some() {
+            let hints = if app.picker.is_some() || app.search_open {
                 PICKER_HINTS
             } else {
                 HINTS
@@ -313,7 +328,7 @@ mod tests {
         app.update(Action::OpenPicker(crate::picker::PickerKind::Genre));
         insta::assert_snapshot!("genre_picker", render(&mut app, 100, 24).backend());
         for c in "tech".chars() {
-            app.update(Action::PickerInput(c));
+            app.update(Action::TypeChar(c));
         }
         insta::assert_snapshot!("genre_picker_search", render(&mut app, 100, 24).backend());
     }
@@ -347,6 +362,31 @@ mod tests {
         assert!(halfblocks > 50, "cover not drawn ({halfblocks} cells)");
         assert_eq!(app.selected().unwrap().id, id);
         insta::assert_snapshot!("cover_loaded", terminal.backend());
+    }
+
+    #[test]
+    fn search_popup_and_results() {
+        let mut app = app_with_page();
+        app.update(Action::OpenSearch);
+        insta::assert_snapshot!("search_empty", render(&mut app, 110, 24).backend());
+        for c in "aphex twin".chars() {
+            app.update(Action::TypeChar(c));
+        }
+        let generation = match app.update(Action::SearchDue(10))[..] {
+            [Effect::FetchSearch { generation, .. }] => generation,
+            ref other => panic!("{other:?}"),
+        };
+        let results =
+            crate::bandcamp::parse_search(include_str!("../../tests/fixtures/search_aphex.json"))
+                .unwrap();
+        app.update(Action::SearchLoaded {
+            generation,
+            result: Ok(results),
+        });
+        insta::assert_snapshot!("search_results_popup", render(&mut app, 110, 24).backend());
+        app.update(Action::Down);
+        app.update(Action::Play);
+        insta::assert_snapshot!("search_results_list", render(&mut app, 110, 24).backend());
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod discover;
 mod error;
 mod filters;
 pub mod images;
+mod search;
 mod types;
 
 use std::time::Duration;
@@ -19,6 +20,7 @@ pub use album::{Album, Band, Tag, Track};
 pub use discover::{Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, Slice};
 pub use error::{Error, Result};
 pub use filters::{Facet, Filters, Subgenre};
+pub use search::{Artist, ArtistMatch, SearchResult};
 pub use types::{ArtId, BandId, Date, ImageId, ItemId, Price, TrackId, TralbumKind};
 
 const DEFAULT_BASE_URL: &str = "https://bandcamp.com/";
@@ -38,6 +40,8 @@ const API_TIMEOUT: Duration = Duration::from_secs(20);
 const DISCOVER: &str = "discover_web";
 const TRALBUM_DETAILS: &str = "tralbum_details";
 const STREAM_REFRESH: &str = "stream refresh";
+const SEARCH: &str = "search";
+const BAND_DETAILS: &str = "band_details";
 
 /// Bandcamp API client. Cheap to clone: clones share one connection pool.
 #[derive(Debug, Clone)]
@@ -109,6 +113,27 @@ impl BandcampClient {
         Ok(response.into())
     }
 
+    /// Searches artists, albums and tracks, like the box on bandcamp.com. Up to 50 results,
+    /// best first.
+    pub async fn search(&self, query: &str) -> Result<Vec<SearchResult>> {
+        let request = self
+            .http
+            .post(self.endpoint("api/bcsearch_public_api/1/autocomplete_elastic"))
+            .json(&search::SearchBody::new(query));
+        let response: search::SearchResponse = self.send(SEARCH, request).await?;
+        Ok(response.into())
+    }
+
+    /// An artist's (or label's) page with their discography.
+    pub async fn artist(&self, band_id: BandId) -> Result<Artist> {
+        let request = self
+            .http
+            .get(self.endpoint("api/mobile/25/band_details"))
+            .query(&[("band_id", band_id.to_string())]);
+        let response: search::BandResponse = self.send(BAND_DETAILS, request).await?;
+        Ok(response.into())
+    }
+
     /// Gets a fresh signed URL for an expired CDN stream URL (`…bcbits.com/stream/…`).
     ///
     /// Only accepts CDN URLs as served after the `stream_redirect` hop; Bandcamp answers
@@ -160,6 +185,16 @@ pub fn parse_discover(json: &str) -> Result<DiscoverPage> {
 /// Parses a `tralbum_details` response body.
 pub fn parse_album(json: &str) -> Result<Album> {
     decode::<album::Response>(TRALBUM_DETAILS, json.as_bytes()).map(Into::into)
+}
+
+/// Parses a search response body.
+pub fn parse_search(json: &str) -> Result<Vec<SearchResult>> {
+    decode::<search::SearchResponse>(SEARCH, json.as_bytes()).map(Into::into)
+}
+
+/// Parses a `band_details` response body.
+pub fn parse_artist(json: &str) -> Result<Artist> {
+    decode::<search::BandResponse>(BAND_DETAILS, json.as_bytes()).map(Into::into)
 }
 
 /// The two error shapes Bandcamp returns, both with HTTP 200:

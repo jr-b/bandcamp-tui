@@ -128,3 +128,32 @@ async fn refreshes_a_cdn_stream_url() {
     let fresh = client.refresh_stream_url(&cdn).await.unwrap();
     assert_eq!(fresh.path(), cdn.path());
 }
+
+#[tokio::test]
+#[ignore = "hits bandcamp.com"]
+async fn search_finds_an_artist_and_their_releases_play() {
+    use bandcamp_tui::bandcamp::SearchResult;
+    let client = BandcampClient::new().unwrap();
+    let results = client.search("aphex twin").await.unwrap();
+    let artist = results
+        .iter()
+        .find_map(|r| match r {
+            SearchResult::Artist(a) if a.name == "Aphex Twin" => Some(a.clone()),
+            _ => None,
+        })
+        .expect("Aphex Twin in results");
+    assert!(
+        results
+            .iter()
+            .any(|r| matches!(r, SearchResult::Release(_)))
+    );
+
+    let page = client.artist(artist.band_id).await.unwrap();
+    assert!(page.releases.len() > 5, "{}", page.releases.len());
+    let release = &page.releases[0];
+    let album = client
+        .album(release.band_id, release.id, release.kind)
+        .await
+        .unwrap();
+    assert_eq!(album.title, release.title);
+}

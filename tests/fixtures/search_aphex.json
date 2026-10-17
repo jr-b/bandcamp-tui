@@ -1,0 +1,110 @@
+{
+  "auto": {
+    "results": [
+      {
+        "type": "b",
+        "id": 1533096991,
+        "art_id": null,
+        "img_id": 36351072,
+        "name": "Aphex Twin",
+        "item_url_root": "https://aphextwin.bandcamp.com",
+        "location": "UK",
+        "is_label": false,
+        "tag_names": [
+          "Electronic"
+        ],
+        "img": "https://f4.bcbits.com/img/0036351072_23.jpg",
+        "genre_name": "Electronic",
+        "stat_params": "search_item_id=1533096991&search_item_type=b&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=1"
+      },
+      {
+        "type": "a",
+        "id": 1308944319,
+        "art_id": 2683258024,
+        "img_id": null,
+        "name": "Drukqs",
+        "band_id": 1533096991,
+        "band_name": "Aphex Twin",
+        "item_url_root": "https://aphextwin.bandcamp.com",
+        "item_url_path": "https://aphextwin.bandcamp.com/album/drukqs",
+        "img": "https://f4.bcbits.com/img/2683258024_3.jpg",
+        "tag_names": null,
+        "stat_params": "search_item_id=1308944319&search_item_type=a&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=2"
+      },
+      {
+        "type": "a",
+        "id": 385726686,
+        "art_id": 2665747684,
+        "img_id": null,
+        "name": "Syro",
+        "band_id": 1533096991,
+        "band_name": "Aphex Twin",
+        "item_url_root": "https://aphextwin.bandcamp.com",
+        "item_url_path": "https://aphextwin.bandcamp.com/album/syro",
+        "img": "https://f4.bcbits.com/img/2665747684_3.jpg",
+        "tag_names": null,
+        "stat_params": "search_item_id=385726686&search_item_type=a&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=3"
+      },
+      {
+        "type": "a",
+        "id": 4011878635,
+        "art_id": 2686992647,
+        "img_id": null,
+        "name": "Windowlicker",
+        "band_id": 1533096991,
+        "band_name": "Aphex Twin",
+        "item_url_root": "https://aphextwin.bandcamp.com",
+        "item_url_path": "https://aphextwin.bandcamp.com/album/windowlicker",
+        "img": "https://f4.bcbits.com/img/2686992647_3.jpg",
+        "tag_names": null,
+        "stat_params": "search_item_id=4011878635&search_item_type=a&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=4"
+      },
+      {
+        "type": "a",
+        "id": 2044250030,
+        "art_id": 417710314,
+        "img_id": null,
+        "name": "Collapse EP",
+        "band_id": 1533096991,
+        "band_name": "Aphex Twin",
+        "item_url_root": "https://aphextwin.bandcamp.com",
+        "item_url_path": "https://aphextwin.bandcamp.com/album/collapse-ep",
+        "img": "https://f4.bcbits.com/img/0417710314_3.jpg",
+        "tag_names": null,
+        "stat_params": "search_item_id=2044250030&search_item_type=a&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=5"
+      },
+      {
+        "type": "t",
+        "id": 3240856025,
+        "art_id": 1317333535,
+        "img_id": null,
+        "name": "Falling Free Aphex Twin Remix",
+        "band_id": 1092710264,
+        "band_name": "Curve",
+        "album_name": "Rare and Unreleased",
+        "item_url_root": "https://curve.bandcamp.com",
+        "item_url_path": "https://curve.bandcamp.com/track/falling-free-aphex-twin-remix",
+        "img": "https://f4.bcbits.com/img/1317333535_3.jpg",
+        "album_id": 3465087733,
+        "stat_params": "search_item_id=3240856025&search_item_type=t&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=32"
+      },
+      {
+        "type": "t",
+        "id": 1739851833,
+        "art_id": 770978164,
+        "img_id": null,
+        "name": "aphex twin does dubstep",
+        "band_id": 2097250472,
+        "band_name": "aphex twin",
+        "album_name": "aphex twin is back baybe",
+        "item_url_root": "https://humorous.bandcamp.com",
+        "item_url_path": "https://humorous.bandcamp.com/track/aphex-twin-does-dubstep",
+        "img": "https://f4.bcbits.com/img/0770978164_3.jpg",
+        "album_id": 2736852665,
+        "stat_params": "search_item_id=1739851833&search_item_type=t&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=35"
+      }
+    ],
+    "stat_params_for_tag": "search_item_id=2&search_item_type=%40&search_match_part=%3F&search_page_id=5868727959&search_page_no=0&search_rank=1",
+    "time_ms": 8
+  }
+}
