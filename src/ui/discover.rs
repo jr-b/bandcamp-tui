@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Cell, Row, Table};
 
 use super::{ACCENT, pane};
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, ListSource};
 use crate::format;
 
 const WIDTHS: [Constraint; 5] = [
@@ -20,7 +20,12 @@ const WIDTHS: [Constraint; 5] = [
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Discover;
-    let mut block = pane("Discover", focused);
+    let title = match &app.source {
+        ListSource::Discover => "Discover".to_owned(),
+        ListSource::Search(_) => "Search results".to_owned(),
+        ListSource::Artist(name) => name.clone(),
+    };
+    let mut block = pane(&title, focused);
     if app.discover.loading {
         block = block.title(Line::from(" loading… ").right_aligned().fg(ACCENT));
     }
@@ -29,10 +34,11 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     app.page_rows = usize::from(inner.height.saturating_sub(1));
 
     if app.discover.items.is_empty() {
-        let text = if app.discover.loading {
-            "Loading Discover…"
-        } else {
-            "No releases match these filters."
+        let text = match (&app.source, app.discover.loading) {
+            (ListSource::Discover, true) => "Loading Discover…",
+            (ListSource::Discover, false) => "No releases match these filters.",
+            (_, true) => "Loading releases…",
+            (_, false) => "No releases.",
         };
         frame.render_widget(block, area);
         let y = inner.y + inner.height / 2;

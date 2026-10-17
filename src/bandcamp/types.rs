@@ -78,6 +78,23 @@ impl Date {
         ((1..=12).contains(&month) && (1..=31).contains(&day)).then_some(Self { year, month, day })
     }
 
+    /// Parses the leading `D Mon YYYY` of strings like `"22 Oct 2001 00:00:00 GMT"`.
+    #[must_use]
+    pub fn parse_dmy(s: &str) -> Option<Self> {
+        const MONTHS: [&str; 12] = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        let mut parts = s.split_whitespace();
+        let day: u8 = parts.next()?.parse().ok()?;
+        let month_name = parts.next()?;
+        let month = MONTHS
+            .iter()
+            .position(|m| m.eq_ignore_ascii_case(month_name))?;
+        let year = parts.next()?.parse().ok()?;
+        let month = u8::try_from(month + 1).ok()?;
+        (1..=31).contains(&day).then_some(Self { year, month, day })
+    }
+
     /// Converts a unix timestamp (seconds) to a UTC date.
     #[must_use]
     pub fn from_unix(secs: i64) -> Self {
@@ -180,6 +197,28 @@ mod tests {
         assert_eq!(Date::parse_ymd_prefix("2026-13-01"), None);
         assert_eq!(Date::parse_ymd_prefix("garbage"), None);
         assert_eq!(Date::parse_ymd_prefix(""), None);
+    }
+
+    #[test]
+    fn date_parse_dmy() {
+        assert_eq!(
+            Date::parse_dmy("22 Oct 2001 00:00:00 GMT"),
+            Some(Date {
+                year: 2001,
+                month: 10,
+                day: 22
+            })
+        );
+        assert_eq!(
+            Date::parse_dmy("04 oct 2024"),
+            Some(Date {
+                year: 2024,
+                month: 10,
+                day: 4
+            })
+        );
+        assert_eq!(Date::parse_dmy("22 Foo 2001"), None);
+        assert_eq!(Date::parse_dmy(""), None);
     }
 
     #[test]

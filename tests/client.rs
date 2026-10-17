@@ -232,3 +232,33 @@ async fn refresh_stream_url_returns_the_new_url() {
         "{err:?}"
     );
 }
+
+#[tokio::test]
+async fn search_and_artist_requests() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/bcsearch_public_api/1/autocomplete_elastic"))
+        .and(body_json(json!({
+            "search_text": "aphex twin",
+            "search_filter": "",
+            "full_page": false,
+            "fan_id": null
+        })))
+        .respond_with(json_response(fixture("search_aphex.json")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/mobile/25/band_details"))
+        .and(query_param("band_id", "1533096991"))
+        .respond_with(json_response(fixture("band_aphex.json")))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let client = client_for(&server);
+
+    let results = client.search("aphex twin").await.unwrap();
+    assert_eq!(results.len(), 7);
+    let artist = client.artist(BandId(1_533_096_991)).await.unwrap();
+    assert_eq!(artist.releases.len(), 5);
+}

@@ -1,0 +1,68 @@
+{
+  "id": 1533096991,
+  "name": "Aphex Twin",
+  "bio_image_id": 36351072,
+  "bio_image_width": 2000,
+  "bio_image_height": 2000,
+  "bio": null,
+  "bandcamp_url": "https://aphextwin.bandcamp.com",
+  "discography": [
+    {
+      "item_id": 1308944319,
+      "item_type": "album",
+      "artist_name": null,
+      "band_name": "Aphex Twin",
+      "title": "Drukqs",
+      "art_id": 2683258024,
+      "release_date": "22 Oct 2001 00:00:00 GMT",
+      "is_purchasable": true,
+      "band_id": 1533096991
+    },
+    {
+      "item_id": 299452944,
+      "item_type": "album",
+      "artist_name": null,
+      "band_name": "Aphex Twin",
+      "title": "Surfing On Sine Waves (Expanded Edition)",
+      "art_id": 325383450,
+      "release_date": "26 Sep 2025 00:00:00 GMT",
+      "is_purchasable": true,
+      "band_id": 1533096991
+    },
+    {
+      "item_id": 3250162007,
+      "item_type": "album",
+      "artist_name": null,
+      "band_name": "Aphex Twin",
+      "title": "Music From The Merch Desk (2016 - 2023)",
+      "art_id": 3681895495,
+      "release_date": "17 Dec 2024 00:00:00 GMT",
+      "is_purchasable": true,
+      "band_id": 1533096991
+    },
+    {
+      "item_id": 964967358,
+      "item_type": "album",
+      "artist_name": null,
+      "band_name": "Aphex Twin",
+      "title": "Selected Ambient Works Volume II (Expanded Edition)",
+      "art_id": 497903782,
+      "release_date": "04 Oct 2024 00:00:00 GMT",
+      "is_purchasable": true,
+      "band_id": 1533096991
+    },
+    {
+      "item_id": 1709374613,
+      "item_type": "track",
+      "artist_name": null,
+      "band_name": "Aphex Twin",
+      "title": "#19",
+      "art_id": 3586293383,
+      "release_date": "18 Jun 2024 00:00:00 GMT",
+      "is_purchasable": true,
+      "band_id": 1533096991
+    }
+  ],
+  "location": "UK",
+  "header_image_id": null
+}

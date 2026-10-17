@@ -12,6 +12,7 @@ pub const HINTS: &[(&str, &str)] = &[
     ("space", "pause"),
     ("tab", "pane"),
     ("q", "quit"),
+    ("/", "search"),
     ("?", "help"),
     ("n/p", "track"),
     ("←→", "seek"),
@@ -62,6 +63,8 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "Discover",
         &[
+            ("/", "search artists, albums, tracks"),
+            ("esc", "back to Discover from search"),
             ("f", "genre or any tag"),
             ("t", "release time"),
             ("L", "location"),
@@ -76,7 +79,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
-    /// A filter picker is open: letters are search text.
+    /// A filter picker or the search box is open: letters are text.
     Picker,
     /// The help overlay is open: any key closes it.
     Help,
@@ -126,6 +129,8 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Char('L') => Action::OpenPicker(PickerKind::Location),
         KeyCode::Char('o') => Action::OpenInBrowser,
         KeyCode::Char('a') => Action::ToggleAutoplay,
+        KeyCode::Char('/') => Action::OpenSearch,
+        KeyCode::Esc => Action::BackToDiscover,
         KeyCode::Char('?') => Action::ShowHelp,
         _ => return None,
     };
@@ -136,17 +141,17 @@ fn picker_action(key: KeyEvent) -> Option<Action> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let action = match key.code {
         KeyCode::Char('c') if ctrl => Action::Quit,
-        KeyCode::Char('u') if ctrl => Action::PickerClear,
+        KeyCode::Char('u') if ctrl => Action::ClearInput,
         KeyCode::Char('p' | 'k') if ctrl => Action::Up,
         KeyCode::Char('n' | 'j') if ctrl => Action::Down,
-        KeyCode::Esc => Action::ClosePicker,
+        KeyCode::Esc => Action::ClosePopup,
         KeyCode::Enter => Action::Play,
         KeyCode::Up => Action::Up,
         KeyCode::Down => Action::Down,
         KeyCode::PageUp => Action::PageUp,
         KeyCode::PageDown => Action::PageDown,
-        KeyCode::Backspace => Action::PickerBackspace,
-        KeyCode::Char(c) if !ctrl => Action::PickerInput(c),
+        KeyCode::Backspace => Action::Backspace,
+        KeyCode::Char(c) if !ctrl => Action::TypeChar(c),
         _ => return None,
     };
     Some(action)
@@ -168,13 +173,13 @@ mod tests {
     fn picker_takes_letters_as_text() {
         assert_eq!(
             press_in_picker(KeyCode::Char('q')),
-            Some(Action::PickerInput('q'))
+            Some(Action::TypeChar('q'))
         );
         assert_eq!(
             press_in_picker(KeyCode::Char('j')),
-            Some(Action::PickerInput('j'))
+            Some(Action::TypeChar('j'))
         );
-        assert_eq!(press_in_picker(KeyCode::Esc), Some(Action::ClosePicker));
+        assert_eq!(press_in_picker(KeyCode::Esc), Some(Action::ClosePopup));
         assert_eq!(press_in_picker(KeyCode::Enter), Some(Action::Play));
         assert_eq!(
             action_for(
@@ -183,8 +188,8 @@ mod tests {
             ),
             Some(Action::Quit)
         );
-        // Esc does nothing outside the picker (it doesn't quit).
-        assert_eq!(press(KeyCode::Esc), None);
+        // Esc never quits: outside popups it goes back to Discover.
+        assert_eq!(press(KeyCode::Esc), Some(Action::BackToDiscover));
     }
 
     #[test]

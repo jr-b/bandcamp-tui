@@ -20,6 +20,15 @@ use crate::player::{PlayerEvent, PlayerHandle};
 const PROGRESS_TICK: Duration = Duration::from_millis(250);
 /// Wait this long after the selection stops moving before loading release details.
 const ALBUM_DEBOUNCE: Duration = Duration::from_millis(250);
+/// Wait this long after typing stops before searching.
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
+
+/// Pending debounced actions; each kind keeps only its latest request.
+#[derive(Default)]
+struct Timers {
+    album: Option<(Instant, crate::bandcamp::ItemId)>,
+    search: Option<(Instant, u64)>,
+}
 
 pub struct Services {
     pub client: BandcampClient,
@@ -69,8 +78,8 @@ pub async fn run(
         art: art.map(std::sync::Arc::new),
     };
     // At most one pending debounced album load: (when, which).
-    let mut album_due: Option<(Instant, crate::bandcamp::ItemId)> = None;
-    executor.run(effects, &mut album_due);
+    let mut timers = Timers::default();
+    executor.run(effects, &mut timers);
 
     let mut input = EventStream::new();
     let mut ticker = tokio::time::interval(PROGRESS_TICK);
@@ -87,7 +96,7 @@ pub async fn run(
                 Some(Ok(Event::Key(key))) => {
                     let mode = if app.show_help {
                         input::Mode::Help
-                    } else if app.picker.is_some() {
+                    } else if app.picker.is_some() || app.search_open {
                         input::Mode::Picker
                     } else {
                         input::Mode::Normal
@@ -104,8 +113,11 @@ pub async fn run(
                 event: Some(event),
                 status: player.as_ref().map(PlayerHandle::status).unwrap_or_default(),
             }),
-            () = sleep_until_due(album_due), if album_due.is_some() => {
-                album_due.take().map(|(_, id)| Action::AlbumDue(id))
+            () = sleep_until(timers.album.map(|t| t.0)), if timers.album.is_some() => {
+                timers.album.take().map(|(_, id)| Action::AlbumDue(id))
+            },
+            () = sleep_until(timers.search.map(|t| t.0)), if timers.search.is_some() => {
+                timers.search.take().map(|(_, generation)| Action::SearchDue(generation))
             },
             _ = ticker.tick(), if app.is_playing() => player.as_ref().and_then(|p| {
                 // Skip the redraw unless something visible changed (the clock shows whole
@@ -119,7 +131,7 @@ pub async fn run(
         };
         if let Some(action) = action {
             let effects = app.update(action);
-            executor.run(effects, &mut album_due);
+            executor.run(effects, &mut timers);
             dirty = true;
         }
         if app.should_quit {
@@ -132,8 +144,8 @@ pub async fn run(
     Ok(())
 }
 
-async fn sleep_until_due(due: Option<(Instant, crate::bandcamp::ItemId)>) {
-    if let Some((when, _)) = due {
+async fn sleep_until(when: Option<Instant>) {
+    if let Some(when) = when {
         tokio::time::sleep_until(when).await;
     }
 }
@@ -154,15 +166,35 @@ struct Executor {
 }
 
 impl Executor {
-    fn run(
-        &self,
-        effects: Vec<Effect>,
-        album_due: &mut Option<(Instant, crate::bandcamp::ItemId)>,
-    ) {
+    fn run(&self, effects: Vec<Effect>, timers: &mut Timers) {
         for effect in effects {
             match effect {
                 Effect::DebounceAlbum(id) => {
-                    *album_due = Some((Instant::now() + ALBUM_DEBOUNCE, id));
+                    timers.album = Some((Instant::now() + ALBUM_DEBOUNCE, id));
+                }
+                Effect::DebounceSearch(generation) => {
+                    timers.search = Some((Instant::now() + SEARCH_DEBOUNCE, generation));
+                }
+                Effect::FetchSearch { query, generation } => {
+                    tracing::debug!(%query, "searching");
+                    let client = self.client.clone();
+                    let tx = self.results.clone();
+                    tokio::spawn(async move {
+                        let result = client.search(&query).await.map_err(|e| error_chain(&e));
+                        let _ = tx.send(Action::SearchLoaded { generation, result });
+                    });
+                }
+                Effect::FetchArtist(band_id) => {
+                    let client = self.client.clone();
+                    let tx = self.results.clone();
+                    tokio::spawn(async move {
+                        let result = client
+                            .artist(band_id)
+                            .await
+                            .map(Box::new)
+                            .map_err(|e| error_chain(&e));
+                        let _ = tx.send(Action::ArtistLoaded { band_id, result });
+                    });
                 }
                 Effect::FetchDiscover {
                     query,
