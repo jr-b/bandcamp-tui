@@ -5,16 +5,19 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crate::app::Action;
 
 /// One line of the key help, in display order: `(keys, what they do)`.
+/// Ordered by importance: narrow terminals show only the first few.
 pub const HINTS: &[(&str, &str)] = &[
-    ("↑↓", "move"),
     ("⏎", "play"),
     ("space", "pause"),
+    ("tab", "pane"),
+    ("q", "quit"),
     ("n/p", "track"),
     ("←→", "seek"),
     ("+/-", "volume"),
+    ("i", "info"),
     ("s", "sort"),
     ("r", "refresh"),
-    ("q", "quit"),
+    ("↑↓", "move"),
 ];
 
 #[must_use]
@@ -35,7 +38,11 @@ pub fn action_for(key: KeyEvent) -> Option<Action> {
         KeyCode::PageDown => Action::PageDown,
         KeyCode::Char('g') | KeyCode::Home => Action::Top,
         KeyCode::Char('G') | KeyCode::End => Action::Bottom,
-        KeyCode::Enter => Action::PlaySelected,
+        KeyCode::Enter => Action::Play,
+        KeyCode::Tab | KeyCode::BackTab => Action::ToggleFocus,
+        KeyCode::Char('h') => Action::FocusDiscover,
+        KeyCode::Char('l') => Action::FocusAlbum,
+        KeyCode::Char('i') => Action::ToggleInfo,
         KeyCode::Char(' ') => Action::TogglePause,
         KeyCode::Char('n') => Action::NextTrack,
         KeyCode::Char('p') => Action::PreviousTrack,

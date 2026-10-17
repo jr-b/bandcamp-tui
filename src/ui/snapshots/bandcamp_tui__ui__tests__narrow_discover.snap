@@ -1,5 +1,5 @@
 ---
-source: src/ui.rs
+source: src/ui/mod.rs
 expression: "render(&mut app, 70, 16).backend()"
 ---
 " bandcamp  Discover · electronic · best-selling    1,947,113 releases "
@@ -17,4 +17,4 @@ expression: "render(&mut app, 70, 16).backend()"
 " Now playing ─────────────────────────────────────────────────────────"
 " Nothing playing. Select a release and press ⏎.                       "
 "                                                                      "
-" ↑↓ move  ⏎ play  space pause  n/p track  ←→ seek  +/- volume  s sort "
+" ⏎ play  space pause  tab pane  q quit  n/p track  ←→ seek  +/- volume"
