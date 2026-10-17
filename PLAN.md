@@ -156,48 +156,56 @@ tests/
 * **Track fetching:** tracks are streamed progressively (see §2.1). We never download a whole
   track up front and never write audio to disk.
 
-### 2.1 Streaming pipeline (resource-bounded)
+### 2.1 Streaming pipeline (resource-bounded) — implemented in milestone 3
 
 ```
-CDN (HTTP/2, Range) ─► stream-download ─► BoundedStorage ─► symphonia ─► PCM ring ─► cpal callback
-   tokio task          (reqwest-rustls)   (1 MiB ring, RAM)  (mp3 only,   (rtrb,      (rodio mixer;
-                                                             own thread)  ~0.5 s)     never blocks)
+CDN ─► HttpSource ─► symphonia ─► PCM ring ─► Segment ─► rodio Player ─► audio device
+       (1 MiB window,  (decode      (~0.5 s,    (audio callback;
+        tokio task)     thread)      rtrb)       never blocks)
 ```
 
-* **Compressed buffer:** `BoundedStorageProvider<MemoryStorageProvider>` with a fixed
-  **1 MiB** ring (about 64 s of 128 kbps audio; configurable). When the ring is full the
-  download pauses until the player catches up. Memory is therefore constant no matter how long
-  the track is, and bandwidth matches what you actually listen to. If you skip a track, we don't
-  download the rest of it.
-* **Prebuffer:** `prefetch_bytes = 48 KiB` (about 3 s) instead of the default 256 KiB, so playback
-  starts quickly. If the buffer runs dry, the player enters `Buffering` and refills to the same
-  threshold before resuming.
-* **Decode thread:** symphonia decodes on our own thread into a small lock-free `rtrb` ring of
-  f32 samples (about 0.5 s ≈ 176 KiB at 44.1 kHz stereo). The audio callback only drains that
-  ring. If it's empty, the callback outputs silence and raises a `Buffering` event, so network
-  stalls never glitch the audio. This is the only thread that blocks on network reads.
-* **Seeking:**
-  * *Inside the ring window* (e.g. back 10 s): an instant `Seek` on the reader.
-  * *Outside the window*: tear down the stream and reopen it at a byte offset. Bandcamp streams
-    are constant 128 kbps, so `offset ≈ duration_fraction × content_length`. symphonia resyncs
-    on the next MP3 frame header. ⚠ Spike this in milestone 3. Fallback if mid-file starts
-    misbehave: `AdaptiveStorageProvider` backed by a temp file (seekable everywhere, ~0 RAM,
-    deleted on drop).
-* **Next track:** open the next track's stream **only in the last ~15 s** of the current
-  one, and only prefetch its first 48 KiB, for a near-gapless switch. At most **two** streams
-  are ever open at once.
-* **Pause:** pausing stops pulling samples, the ring fills, and the download pauses on its own.
-  If a paused connection gets dropped, or the signed URL expires (403/410), we reconnect with a
-  Range request from the current offset, using a refreshed URL from `/api/stream/1/refresh`.
-* **Lifecycle:** dropping a `TrackStream` cancels its download task (`cancel_on_drop`) and
-  frees its ring. Track changes never leak tasks or buffers.
+Code: `src/player/` (`http_source.rs`, `pipeline.rs`, `segment.rs`, `engine.rs`).
+
+* **Compressed buffer (`HttpSource`):** our own small streaming reader instead of
+  `stream-download`. A spike found that stream-download's bounded storage rejects any seek more
+  than its capacity ahead (it's documented), and its fallback would write audio to disk.
+  `HttpSource` keeps a hard-capped **1 MiB** window (≈64 s at 128 kbps) of the file in RAM:
+  * The download task pauses when the window is full, so bandwidth matches listening, and
+    skipping a track stops its download.
+  * It keeps 256 KiB behind the read position, so short backward seeks come from memory.
+  * A seek outside the window reconnects with `Range: bytes=N-`.
+  * It reuses the resolved CDN URL, so later range requests skip the `stream_redirect` hop.
+  * It retries up to 3 times on 5xx errors or dropped connections. A 403/410 (expired URL) is
+    reported as `PermissionDenied`; refreshing the URL is milestone 7.
+* **Seeking:** symphonia's `SeekMode::Coarse` jumps to an estimated byte offset (exact for CBR,
+  and Bandcamp's streams carry a LAME `Info` header with the frame count) and resyncs on the
+  next frame. ✅ Verified: a seek 6 s into a test file makes one range request at ≈96 KB, and on
+  real Bandcamp tracks seeking forward to 60% and back to 0:10 lands exactly.
+* **Decode thread (`pipeline.rs`):** one per track; the only thread that blocks on the
+  network. It decodes into a lock-free `rtrb` ring of f32 samples (0.5 s ≈ 172 KiB at 44.1 kHz
+  stereo). While the ring is full it sleeps in ¼-buffer steps, still listening for commands.
+* **Audio callback (`segment.rs`):** a rodio `Source` that only pops from the ring: no locks,
+  no allocation. Playback starts once the ring is half full (≈0.25 s). On underrun it outputs
+  whole frames of silence (never a misaligned sample) and reports `Buffering`.
+* **Gapless next track:** the engine opens the next track **15 s** before the current one
+  ends and queues its segment behind it in rodio's `Player`, so the switch is sample-accurate.
+  At most two pipelines exist at once. A seek drops the preload, which is redone later.
+* **Pause:** rodio stops pulling samples, the PCM ring and then the window fill up, and the
+  download stops by itself.
+* **Lifecycle:** dropping a `Pipeline` cancels its segment (instant silence), closes the
+  `HttpSource` (unblocking any read in progress) and ends the download task and thread.
+* **Engine (`engine.rs`):** owns the queue and output. It blocks on its command channel and
+  ticks at 4 Hz only while playing. It skips unstreamable or failing tracks and emits
+  `PlayerEvent`s. `PlayerHandle::status()` is a cheap snapshot for the UI.
+* **Tests:** `tests/player.rs` runs everything against a mock CDN that supports `Range`,
+  and an in-memory rodio mixer pulled by a fake sound card, so no audio device is needed in CI.
 
 ### 2.2 Resource budget
 
 | resource          | target                                                    | how                                                                                 |
 |-------------------|-----------------------------------------------------------|-------------------------------------------------------------------------------------|
-| RAM (RSS)         | **< 30 MB** while playing                                 | 1 MiB compressed ring (+1 MiB for the next track), ~0.2 MiB PCM ring, bounded LRU caches |
-| CPU               | **< 2 %** of one core while playing, **~0 %** when idle   | event-driven redraws only; MP3 decode is cheap                                      |
+| RAM (RSS)         | **< 30 MB** while playing — ✅ measured 26.6 MB RSS (11 MB footprint), flat over time | 1 MiB compressed ring (+1 MiB for the next track), ~0.2 MiB PCM ring, bounded LRU caches |
+| CPU               | **< 2 %** of one core while playing — ✅ measured 0.3–0.4 % steady; **~0 %** when idle (to measure) | event-driven redraws only; MP3 decode is cheap                                      |
 | Network           | ≈ listening rate (16 KB/s)                                | bounded ring applies backpressure; no full-track downloads; debounced metadata fetches |
 | Threads           | main + 1 tokio worker + decode + cpal                     | small runtime (`worker_threads(1)`); no per-request threads                         |
 | Disk              | 0 (logs only)                                             | no audio caching                                                                    |
@@ -211,8 +219,8 @@ Other measures:
   The discover list keeps at most ~1,000 items.
 * **One shared `reqwest::Client`** for connection pooling and HTTP/2 multiplexing to `bcbits.com`.
 * **Minimal crate features:** `rodio` with `default-features = false` and only `playback` +
-  `mp3`; `stream-download` with `default-features = false` and `reqwest-rustls` only (no
-  temp-storage unless the seek fallback is needed); tokio only with the features we use.
+  symphonia directly with only `mp3` (0.5.x, the same version rodio uses); tokio only with the
+  features we use.
 * **Release profile:** `lto = "thin"`, `codegen-units = 1`, `strip = true`.
 * **Measured, not assumed.** A `just bench-resources` script plays a fixed album for 2 minutes
   and reports peak RSS and CPU (`/usr/bin/time -l` on macOS, `-v` on Linux). Budget regressions
@@ -231,8 +239,8 @@ state transitions get unit tests without needing a terminal.
 | async runtime    | `tokio` (rt-multi-thread with 1 worker, macros, sync, time)      |
 | HTTP             | `reqwest` (json, rustls-tls, gzip; no OpenSSL dependency)        |
 | JSON             | `serde`, `serde_json`                                            |
-| audio output     | `rodio` 0.23 (`default-features = false`, `playback` + `mp3`)    |
-| streaming        | `stream-download` 0.24 (`default-features = false`, `reqwest-rustls`) |
+| audio output     | `rodio` 0.23 (`default-features = false`, `playback` only)       |
+| MP3 decoding     | `symphonia` 0.5 (`default-features = false`, `mp3`)              |
 | PCM ring buffer  | `rtrb` (lock-free single-producer/single-consumer)               |
 | album art        | `ratatui-image` 11.x (`default-features = false`, `crossterm`; no chafa) + `image` (`jpeg` only) |
 | errors           | `thiserror` (library modules), `color-eyre` (main/app)           |
@@ -322,12 +330,12 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
 
 ## 5. Milestones
 
-1. **Scaffold.** `cargo new`, CI (GitHub Actions: fmt, clippy `-D warnings`, test on
+1. ✅ **Scaffold.** `cargo new`, CI (GitHub Actions: fmt, clippy `-D warnings`, test on
    Linux/macOS), `rustfmt.toml`, `deny.toml` (cargo-deny), README, MIT/Apache-2.0 license.
-2. **API client.** `BandcampClient` with `discover()` and `album()`, serde types and domain
+2. ✅ **API client.** `BandcampClient` with `discover()` and `album()`, serde types and domain
    mapping. Unit tests against recorded fixtures, wiremock integration tests, and an
    `#[ignore]` live smoke test.
-3. **Headless streaming player.** The streaming pipeline from §2.1: bounded ring, decode
+3. ✅ **Headless streaming player.** The streaming pipeline from §2.1: bounded ring, decode
    thread, PCM ring and buffering states. An example binary (`examples/play_album.rs`) streams the
    first discover album end to end. Spike the out-of-window seek (byte-offset reopen) and
    measure the §2.2 budget here, before any UI exists.

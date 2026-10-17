@@ -26,3 +26,7 @@ deny:
 
 run *args:
     cargo run -- {{args}}
+
+# Stream the first playable Discover album through the speakers (no UI).
+play *args:
+    cargo run --release --example play_album -- {{args}}
