@@ -4,3 +4,4 @@
 //! into the TUI.
 
 pub mod bandcamp;
+pub mod player;
