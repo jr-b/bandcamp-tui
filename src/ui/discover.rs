@@ -61,6 +61,8 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let rows = app.discover.items.iter().map(|item| {
         let marker = if Some(item.id) == playing_id {
             "♪"
+        } else if app.queue.contains_release(item.id) {
+            "+"
         } else {
             " "
         };

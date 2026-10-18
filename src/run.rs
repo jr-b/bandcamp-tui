@@ -43,6 +43,8 @@ pub struct Services {
     pub art_note: Option<&'static str>,
     /// Start with autoplay on (from `config.toml`).
     pub autoplay: bool,
+    /// The saved play queue (restored without starting playback).
+    pub queue: Vec<crate::queue::QueueEntry>,
 }
 
 impl std::fmt::Debug for Services {
@@ -67,6 +69,7 @@ pub async fn run(
         art,
         art_note,
         autoplay,
+        queue,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
     let (mut app, effects) = App::new(query, player.is_some());
@@ -76,6 +79,7 @@ pub async fn run(
         app.art_font = picker.font_size();
     }
     app.autoplay = autoplay;
+    app.queue = crate::queue::Queue::from_saved(queue);
     if let Some(note) = art_note {
         app.update(Action::Notice(note.to_owned()));
     }
@@ -110,6 +114,8 @@ pub async fn run(
                         input::Mode::Help
                     } else if app.picker.is_some() || app.search_open {
                         input::Mode::Picker
+                    } else if app.queue_view.is_some() {
+                        input::Mode::Queue
                     } else {
                         input::Mode::Normal
                     };

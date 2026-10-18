@@ -12,6 +12,7 @@ pub mod fuzzy;
 pub mod input;
 pub mod picker;
 pub mod player;
+pub mod queue;
 pub mod run;
 pub mod settings;
 pub mod ui;

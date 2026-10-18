@@ -12,15 +12,27 @@ use crate::format;
 use crate::player::PlaybackState;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
-    let autoplay = if app.autoplay {
-        Line::from(" autoplay on ").fg(ACCENT).right_aligned()
+    let mut right = Vec::new();
+    if let Some((next, more)) = app.up_next() {
+        let more = if more > 0 {
+            format!(" (+{more})")
+        } else {
+            String::new()
+        };
+        let label = format::truncate(&next.label(), usize::from(area.width / 3)).into_owned();
+        right.push(Span::styled(" next: ", Style::new().dim()));
+        right.push(Span::raw(label));
+        right.push(Span::styled(format!("{more} ·"), Style::new().dim()));
+    }
+    right.push(if app.autoplay {
+        Span::styled(" autoplay on ", Style::new().fg(ACCENT))
     } else {
-        Line::from(" autoplay off ").dim().right_aligned()
-    };
+        Span::styled(" autoplay off ", Style::new().dim())
+    });
     let block = Block::new()
         .borders(Borders::TOP)
         .title(" Now playing ")
-        .title(autoplay)
+        .title(Line::from(right).right_aligned())
         .border_style(Style::new().dim());
     let inner = block.inner(area);
     frame.render_widget(block, area);

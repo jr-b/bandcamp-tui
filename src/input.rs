@@ -21,10 +21,20 @@ pub const HINTS: &[(&str, &str)] = &[
     ("t", "time"),
     ("L", "place"),
     ("i", "info"),
+    ("e", "queue"),
     ("a", "autoplay"),
     ("s", "sort"),
     ("r", "refresh"),
     ("↑↓", "move"),
+];
+
+/// Hints shown while the queue popup is open.
+pub const QUEUE_HINTS: &[(&str, &str)] = &[
+    ("⏎", "play now"),
+    ("d", "remove"),
+    ("K/J", "move"),
+    ("c", "clear"),
+    ("esc", "close"),
 ];
 
 /// Hints shown while a picker is open.
@@ -61,6 +71,14 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Queue",
+        &[
+            ("e", "add release (or track, in the tracklist)"),
+            ("E", "play next"),
+            ("u", "show queue: ⏎ play  d remove  K J move  c clear"),
+        ],
+    ),
+    (
         "Discover",
         &[
             ("/", "search artists, albums, tracks"),
@@ -83,6 +101,8 @@ pub enum Mode {
     Picker,
     /// The help overlay is open: any key closes it.
     Help,
+    /// The queue popup is open.
+    Queue,
 }
 
 /// Maps a key to an action for the current mode.
@@ -97,6 +117,7 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         Mode::Picker => return picker_action(key),
         Mode::Help if ctrl && key.code == KeyCode::Char('c') => return Some(Action::Quit),
         Mode::Help => return Some(Action::CloseHelp),
+        Mode::Queue => return queue_action(key),
         Mode::Normal => {}
     }
     let action = match key.code {
@@ -129,9 +150,37 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Char('L') => Action::OpenPicker(PickerKind::Location),
         KeyCode::Char('o') => Action::OpenInBrowser,
         KeyCode::Char('a') => Action::ToggleAutoplay,
+        KeyCode::Char('e') => Action::Enqueue,
+        KeyCode::Char('E') => Action::EnqueueNext,
+        KeyCode::Char('u') => Action::OpenQueue,
         KeyCode::Char('/') => Action::OpenSearch,
         KeyCode::Esc => Action::BackToDiscover,
         KeyCode::Char('?') => Action::ShowHelp,
+        _ => return None,
+    };
+    Some(action)
+}
+
+fn queue_action(key: KeyEvent) -> Option<Action> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let action = match key.code {
+        KeyCode::Char('c') if ctrl => Action::Quit,
+        KeyCode::Char('k') | KeyCode::Up => Action::Up,
+        KeyCode::Char('j') | KeyCode::Down => Action::Down,
+        KeyCode::PageUp => Action::PageUp,
+        KeyCode::PageDown => Action::PageDown,
+        KeyCode::Char('g') | KeyCode::Home => Action::Top,
+        KeyCode::Char('G') | KeyCode::End => Action::Bottom,
+        KeyCode::Enter => Action::Play,
+        KeyCode::Char('d' | 'x') | KeyCode::Delete | KeyCode::Backspace => Action::QueueRemove,
+        KeyCode::Char('K') => Action::QueueMoveUp,
+        KeyCode::Char('J') => Action::QueueMoveDown,
+        KeyCode::Char('c') => Action::QueueClear,
+        KeyCode::Esc | KeyCode::Char('u' | 'q') => Action::ClosePopup,
+        // Transport keys keep working with the popup open.
+        KeyCode::Char(' ') => Action::TogglePause,
+        KeyCode::Char('n') => Action::NextTrack,
+        KeyCode::Char('p') => Action::PreviousTrack,
         _ => return None,
     };
     Some(action)
@@ -231,6 +280,22 @@ mod tests {
             let first = key.split('/').next().unwrap_or(key).replace(' ', "");
             assert!(help_keys.contains(&first), "{key} missing from help");
         }
+    }
+
+    #[test]
+    fn queue_popup_keys() {
+        let queue = |code| action_for(KeyEvent::new(code, KeyModifiers::NONE), Mode::Queue);
+        assert_eq!(queue(KeyCode::Char('d')), Some(Action::QueueRemove));
+        assert_eq!(queue(KeyCode::Char('J')), Some(Action::QueueMoveDown));
+        assert_eq!(
+            queue(KeyCode::Char('q')),
+            Some(Action::ClosePopup),
+            "q closes, not quits"
+        );
+        assert_eq!(queue(KeyCode::Char(' ')), Some(Action::TogglePause));
+        assert_eq!(press(KeyCode::Char('e')), Some(Action::Enqueue));
+        assert_eq!(press(KeyCode::Char('E')), Some(Action::EnqueueNext));
+        assert_eq!(press(KeyCode::Char('u')), Some(Action::OpenQueue));
     }
 
     #[test]
