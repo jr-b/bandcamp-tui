@@ -1,0 +1,89 @@
+{
+    "id": 229736348,
+    "type": "t",
+    "title": "Windowlicker",
+    "bandcamp_url": "https://aphextwin.bandcamp.com/track/windowlicker",
+    "art_id": 2686992647,
+    "band": {
+        "band_id": 1533096991,
+        "name": "Aphex Twin",
+        "image_id": 36351072,
+        "bio": null,
+        "location": "UK"
+    },
+    "tralbum_artist": "Aphex Twin",
+    "package_art": [],
+    "featured_track_id": 229736348,
+    "tracks": [
+        {
+            "track_id": 229736348,
+            "track_license_id": null,
+            "title": "Windowlicker",
+            "track_num": 1,
+            "streaming_url": {
+                "mp3-128": "https://bandcamp.com/stream_redirect?enc=mp3-128&track_id=229736348&ts=1792262120&t=11275fd8d63124c69c8a03bfde8f9cab67e73f3f"
+            },
+            "duration": 368.4,
+            "encodings_id": 324845740,
+            "album_title": null,
+            "band_name": "Aphex Twin",
+            "art_id": null,
+            "album_id": 4011878635,
+            "is_streamable": true,
+            "has_lyrics": false,
+            "is_set_price": false,
+            "price": 0.99,
+            "has_digital_download": true,
+            "merch_ids": null,
+            "merch_sold_out": null,
+            "currency": "GBP",
+            "require_email": false,
+            "is_purchasable": true,
+            "band_id": 1533096991,
+            "label": "Warp Records",
+            "label_id": 665116796,
+            "track_url": null
+        }
+    ],
+    "credits": "1999, Warp Records",
+    "about": null,
+    "album_id": 4011878635,
+    "album_title": "Windowlicker",
+    "release_date": 922060800,
+    "is_purchasable": true,
+    "free_download": false,
+    "is_preorder": false,
+    "tags": [
+        {
+            "name": "Electronic",
+            "norm_name": "electronic",
+            "url": "/discover/electronic",
+            "isloc": false,
+            "loc_id": null,
+            "geoname": null
+        },
+        {
+            "name": "United Kingdom",
+            "norm_name": "united-kingdom",
+            "url": "/discover/united-kingdom",
+            "isloc": true,
+            "loc_id": 3707127039,
+            "geoname": {
+                "id": 2635167,
+                "name": "United Kingdom",
+                "fullname": "United Kingdom"
+            }
+        }
+    ],
+    "currency": "GBP",
+    "is_set_price": false,
+    "price": 0.99,
+    "require_email": false,
+    "label": "Warp Records",
+    "label_id": 665116796,
+    "package_details_lite": {},
+    "has_digital_download": true,
+    "num_downloadable_tracks": 1,
+    "merch_sold_out": null,
+    "streaming_limit": 3
+}

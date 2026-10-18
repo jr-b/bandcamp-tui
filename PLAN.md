@@ -22,10 +22,14 @@ Request body (JSON):
   "time_facet_id": null,
   "cursor": "*",
   "size": 60,
-  "include_result_types": ["a", "s"],
+  "include_result_types": ["a"],
   "followed_bands": false
 }
 ```
+
+Only `slice` and `include_result_types` are required; omitting either returns a
+`MissingParamError`. `include_result_types` can include `"s"` (merch, `item_type: "p"`), but we
+only request `"a"`, because merch can't be played.
 
 | field            | values                                                                                          |
 |------------------|-------------------------------------------------------------------------------------------------|
@@ -37,6 +41,11 @@ Request body (JSON):
 | `cursor`         | `"*"` for first page, then the `cursor` from the previous response (`null` = end of results)    |
 
 Response: `{ results: [...], result_count, batch_result_count, cursor, discover_spec_id }`.
+
+**Errors come back with HTTP 200**, in two shapes. The web API uses
+`{"__api_special__":"exception","error_type":"Endpoints::MissingParamError"}` and the mobile
+API uses `{"error":true,"error_message":"No such tralbum for band 1: 1"}`. The client checks
+every body for both shapes.
 Each result contains: `item_id`, `item_type` (`a` album / `t` track), `title`, `item_url`,
 `band_id`, `band_name`, `album_artist` (nullable, overrides band_name), `band_location`,
 `band_genre_id`, `primary_image.image_id`, `release_date`, `track_count`, `duration`,
@@ -80,7 +89,8 @@ if the mobile API changes or breaks.
 
 `https://f4.bcbits.com/img/a{art_id}_{size}.jpg` (album art; `a` prefix) and
 `https://f4.bcbits.com/img/{image_id}_{size}.jpg` (band images). Useful sizes:
-`7` = 160px (~13 KB), `16` = 700px, `10` = full size. For terminal rendering, size `7` or `2` is enough.
+`3` = 100px, `7` = 150px (~13 KB), `2` = 350px, `5`/`16` = 700px, `10` = 1200px, `1` = original
+(e.g. 3000px). For terminal rendering, size `7` is enough.
 
 ### 1.5 Search (stretch goal)
 
@@ -106,32 +116,30 @@ next streamable track (prefetch it while the current one plays)
 
 ## 2. Architecture
 
-A single binary crate with a library-style module layout (so the core logic stays testable),
-on stable Rust, edition 2024.
+A lib + bin crate on stable Rust, edition 2024. `src/lib.rs` holds everything testable without a
+terminal, so `tests/` can use it, and `src/main.rs` wires it into the TUI.
 
 ```
 src/
-  main.rs            # arg parsing, terminal setup/teardown, panic hook, run loop
-  app.rs             # App state + update(Action) -> state transitions (pure, testable)
-  action.rs          # Action/Event enum (keypresses, API results, player events)
-  bandcamp/
-    mod.rs           # BandcampClient (reqwest), base URL injectable for tests
-    discover.rs      # DiscoverQuery builder, DiscoverResponse/DiscoverItem serde types
-    album.rs         # tralbum_details types → domain `Album`, `Track`
-    filters.rs       # genres/subgenres/slices/times/locations (embedded JSON snapshot)
-    images.rs        # art URL helpers
-  player/
-    mod.rs           # Player handle: command channel (Play, Pause, Seek, Stop, Volume)
-    engine.rs        # audio thread: rodio Sink, fetch + decode, emits PlayerEvent
-  ui/
-    mod.rs           # draw(frame, &App)
-    discover.rs      # album grid/list + filter bar
-    album.rs         # album detail: art, metadata, tracklist
-    now_playing.rs   # bottom bar: track, progress gauge, volume, state
-    help.rs          # keybinding overlay
-  config.rs          # optional config file (default filters, volume, keymap)
+  main.rs            # CLI (clap), logging to a file, runtime, terminal init/restore
+  lib.rs
+  app.rs             # App state, Action, Effect, pure `update` (unit-tested)
+  run.rs             # event loop: input/API/player → Action → update → Effects; redraw on change
+  input.rs           # key bindings → Action
+  ui/                # draw(frame, &mut App): mod.rs (layout, header, footer, snapshot tests),
+                     #   discover.rs, album.rs, now_playing.rs
+  format.rs          # durations, prices, thousands, ellipsis truncation
+  bandcamp/          # API client (M2): discover, album, filters, images, types, error
+  player/            # streaming player (M3): engine, pipeline, http_source, segment
+  picker.rs          # filter popup model (genre/time/location), tag normalisation
+  fuzzy.rs           # tiny fuzzy matcher (prefix > word > substring > subsequence)
+  settings.rs        # state.toml: last filters + volume, atomic writes
+  config.rs          # optional user config.toml (album_art), strict parsing
+  art.rs             # cover art: terminal detection, JPEG → kitty/iTerm2/sixel encoding
 tests/
-  fixtures/          # recorded JSON responses (discover, tralbum_details)
+  client.rs, player.rs, live.rs, fixtures/
+examples/
+  play_album.rs      # headless end-to-end player
 ```
 
 ### Concurrency model
@@ -146,48 +154,56 @@ tests/
 * **Track fetching:** tracks are streamed progressively (see §2.1). We never download a whole
   track up front and never write audio to disk.
 
-### 2.1 Streaming pipeline (resource-bounded)
+### 2.1 Streaming pipeline (resource-bounded) — implemented in milestone 3
 
 ```
-CDN (HTTP/2, Range) ─► stream-download ─► BoundedStorage ─► symphonia ─► PCM ring ─► cpal callback
-   tokio task          (reqwest-rustls)   (1 MiB ring, RAM)  (mp3 only,   (rtrb,      (rodio mixer;
-                                                             own thread)  ~0.5 s)     never blocks)
+CDN ─► HttpSource ─► symphonia ─► PCM ring ─► Segment ─► rodio Player ─► audio device
+       (1 MiB window,  (decode      (~0.5 s,    (audio callback;
+        tokio task)     thread)      rtrb)       never blocks)
 ```
 
-* **Compressed buffer:** `BoundedStorageProvider<MemoryStorageProvider>` with a fixed
-  **1 MiB** ring (about 64 s of 128 kbps audio; configurable). When the ring is full the
-  download pauses until the player catches up. Memory is therefore constant no matter how long
-  the track is, and bandwidth matches what you actually listen to. If you skip a track, we don't
-  download the rest of it.
-* **Prebuffer:** `prefetch_bytes = 48 KiB` (about 3 s) instead of the default 256 KiB, so playback
-  starts quickly. If the buffer runs dry, the player enters `Buffering` and refills to the same
-  threshold before resuming.
-* **Decode thread:** symphonia decodes on our own thread into a small lock-free `rtrb` ring of
-  f32 samples (about 0.5 s ≈ 176 KiB at 44.1 kHz stereo). The audio callback only drains that
-  ring. If it's empty, the callback outputs silence and raises a `Buffering` event, so network
-  stalls never glitch the audio. This is the only thread that blocks on network reads.
-* **Seeking:**
-  * *Inside the ring window* (e.g. back 10 s): an instant `Seek` on the reader.
-  * *Outside the window*: tear down the stream and reopen it at a byte offset. Bandcamp streams
-    are constant 128 kbps, so `offset ≈ duration_fraction × content_length`. symphonia resyncs
-    on the next MP3 frame header. ⚠ Spike this in milestone 3. Fallback if mid-file starts
-    misbehave: `AdaptiveStorageProvider` backed by a temp file (seekable everywhere, ~0 RAM,
-    deleted on drop).
-* **Next track:** open the next track's stream **only in the last ~15 s** of the current
-  one, and only prefetch its first 48 KiB, for a near-gapless switch. At most **two** streams
-  are ever open at once.
-* **Pause:** pausing stops pulling samples, the ring fills, and the download pauses on its own.
-  If a paused connection gets dropped, or the signed URL expires (403/410), we reconnect with a
-  Range request from the current offset, using a refreshed URL from `/api/stream/1/refresh`.
-* **Lifecycle:** dropping a `TrackStream` cancels its download task (`cancel_on_drop`) and
-  frees its ring. Track changes never leak tasks or buffers.
+Code: `src/player/` (`http_source.rs`, `pipeline.rs`, `segment.rs`, `engine.rs`).
+
+* **Compressed buffer (`HttpSource`):** our own small streaming reader instead of
+  `stream-download`. A spike found that stream-download's bounded storage rejects any seek more
+  than its capacity ahead (it's documented), and its fallback would write audio to disk.
+  `HttpSource` keeps a hard-capped **1 MiB** window (≈64 s at 128 kbps) of the file in RAM:
+  * The download task pauses when the window is full, so bandwidth matches listening, and
+    skipping a track stops its download.
+  * It keeps 256 KiB behind the read position, so short backward seeks come from memory.
+  * A seek outside the window reconnects with `Range: bytes=N-`.
+  * It reuses the resolved CDN URL, so later range requests skip the `stream_redirect` hop.
+  * It retries up to 3 times on 5xx errors or dropped connections. A 403/410 (expired URL) is
+    reported as `PermissionDenied`; refreshing the URL is milestone 7.
+* **Seeking:** symphonia's `SeekMode::Coarse` jumps to an estimated byte offset (exact for CBR,
+  and Bandcamp's streams carry a LAME `Info` header with the frame count) and resyncs on the
+  next frame. ✅ Verified: a seek 6 s into a test file makes one range request at ≈96 KB, and on
+  real Bandcamp tracks seeking forward to 60% and back to 0:10 lands exactly.
+* **Decode thread (`pipeline.rs`):** one per track; the only thread that blocks on the
+  network. It decodes into a lock-free `rtrb` ring of f32 samples (0.5 s ≈ 172 KiB at 44.1 kHz
+  stereo). While the ring is full it sleeps in ¼-buffer steps, still listening for commands.
+* **Audio callback (`segment.rs`):** a rodio `Source` that only pops from the ring: no locks,
+  no allocation. Playback starts once the ring is half full (≈0.25 s). On underrun it outputs
+  whole frames of silence (never a misaligned sample) and reports `Buffering`.
+* **Gapless next track:** the engine opens the next track **15 s** before the current one
+  ends and queues its segment behind it in rodio's `Player`, so the switch is sample-accurate.
+  At most two pipelines exist at once. A seek drops the preload, which is redone later.
+* **Pause:** rodio stops pulling samples, the PCM ring and then the window fill up, and the
+  download stops by itself.
+* **Lifecycle:** dropping a `Pipeline` cancels its segment (instant silence), closes the
+  `HttpSource` (unblocking any read in progress) and ends the download task and thread.
+* **Engine (`engine.rs`):** owns the queue and output. It blocks on its command channel and
+  ticks at 4 Hz only while playing. It skips unstreamable or failing tracks and emits
+  `PlayerEvent`s. `PlayerHandle::status()` is a cheap snapshot for the UI.
+* **Tests:** `tests/player.rs` runs everything against a mock CDN that supports `Range`,
+  and an in-memory rodio mixer pulled by a fake sound card, so no audio device is needed in CI.
 
 ### 2.2 Resource budget
 
 | resource          | target                                                    | how                                                                                 |
 |-------------------|-----------------------------------------------------------|-------------------------------------------------------------------------------------|
-| RAM (RSS)         | **< 30 MB** while playing                                 | 1 MiB compressed ring (+1 MiB for the next track), ~0.2 MiB PCM ring, bounded LRU caches |
-| CPU               | **< 2 %** of one core while playing, **~0 %** when idle   | event-driven redraws only; MP3 decode is cheap                                      |
+| RAM (RSS)         | **< 30 MB** while playing — ✅ headless 26.6 MB (11 MB footprint), full TUI ~28 MB, flat over time | 1 MiB compressed ring (+1 MiB for the next track), ~0.2 MiB PCM ring, bounded LRU caches |
+| CPU               | **< 2 %** of one core while playing — ✅ measured 0.2–0.3 % with the TUI (redraws only when the second changes); ✅ 0.0 % paused | event-driven redraws only; MP3 decode is cheap                                      |
 | Network           | ≈ listening rate (16 KB/s)                                | bounded ring applies backpressure; no full-track downloads; debounced metadata fetches |
 | Threads           | main + 1 tokio worker + decode + cpal                     | small runtime (`worker_threads(1)`); no per-request threads                         |
 | Disk              | 0 (logs only)                                             | no audio caching                                                                    |
@@ -197,12 +213,12 @@ Other measures:
 * **Render only when something changes.** A dirty flag is set by input, API or player events.
   Progress ticks run at 4 Hz only while playing and stop when paused or idle; no busy loop.
 * **Bounded caches.** Album details LRU (64 entries, metadata only). Cover art is fetched at
-  size `7` (160 px), decoded once into the terminal-protocol form, raw bytes dropped, LRU of 16.
+  size `7` (150 px), decoded once into the terminal-protocol form, raw bytes dropped, LRU of 16.
   The discover list keeps at most ~1,000 items.
 * **One shared `reqwest::Client`** for connection pooling and HTTP/2 multiplexing to `bcbits.com`.
 * **Minimal crate features:** `rodio` with `default-features = false` and only `playback` +
-  `mp3`; `stream-download` with `default-features = false` and `reqwest-rustls` only (no
-  temp-storage unless the seek fallback is needed); tokio only with the features we use.
+  symphonia directly with only `mp3` (0.5.x, the same version rodio uses); tokio only with the
+  features we use.
 * **Release profile:** `lto = "thin"`, `codegen-units = 1`, `strip = true`.
 * **Measured, not assumed.** A `just bench-resources` script plays a fixed album for 2 minutes
   and reports peak RSS and CPU (`/usr/bin/time -l` on macOS, `-v` on Linux). Budget regressions
@@ -221,8 +237,8 @@ state transitions get unit tests without needing a terminal.
 | async runtime    | `tokio` (rt-multi-thread with 1 worker, macros, sync, time)      |
 | HTTP             | `reqwest` (json, rustls-tls, gzip; no OpenSSL dependency)        |
 | JSON             | `serde`, `serde_json`                                            |
-| audio output     | `rodio` 0.23 (`default-features = false`, `playback` + `mp3`)    |
-| streaming        | `stream-download` 0.24 (`default-features = false`, `reqwest-rustls`) |
+| audio output     | `rodio` 0.23 (`default-features = false`, `playback` only)       |
+| MP3 decoding     | `symphonia` 0.5 (`default-features = false`, `mp3`)              |
 | PCM ring buffer  | `rtrb` (lock-free single-producer/single-consumer)               |
 | album art        | `ratatui-image` 11.x (`default-features = false`, `crossterm`; no chafa) + `image` (`jpeg` only) |
 | errors           | `thiserror` (library modules), `color-eyre` (main/app)           |
@@ -234,7 +250,7 @@ state transitions get unit tests without needing a terminal.
 ## 4. UI / UX
 
 ```
-┌ bandcamp ─ [electronic › ambient] [best-selling] [any time] [anywhere] ─────────── ? help ┐
+┌ bandcamp ─ [electronic › techno]  [best-selling] [any time] [anywhere] ─────────── ? help ┐
 │ Discover (1,959,593)                    │ ┌──────────┐ Ocean Company                        │
 │ ▶ Ocean Company — Hotel Pools       10t │ │  (art)   │ by Ocean Company · Stratford Ct.     │
 │   From The Manor House — N4 Records  8t │ │          │ released 16 Oct 2026 · Portland, OR  │
@@ -248,6 +264,20 @@ state transitions get unit tests without needing a terminal.
 ```
 
 Two panes (discover list | album detail) plus a now-playing bar.
+
+### Filters and remembered state (milestone 6)
+
+* One popup for all filters: `f` genre/tag, `t` time range, `L` location. Type to filter
+  (multi-word queries match in any order), `↑↓` to move, `⏎` to apply, `esc` to cancel.
+  Genres list their subgenres indented. Any typed text can also be used as a raw Bandcamp tag
+  (`Drum & Bass` → `drum-bass`). It's offered first if nothing in the list really matches,
+  otherwise last.
+* The "fresh" time facet (`-1`) is left out: the API rejects it without a login
+  (`Discover_1::DiscoverWebException`).
+* The last filters and the volume are saved to `state.toml` next to the log file (atomic write
+  on every change) and restored at startup. `-t`/`-s` override only what they set; `--fresh`
+  ignores the saved state. It's kept separate from a hand-edited config file (M7) so the app
+  never rewrites user comments.
 
 ### Album art: only on capable terminals
 
@@ -283,10 +313,27 @@ Everywhere else, the album pane is text only. **No halfblock or ASCII-art fallba
 ```
 
   Pressing `i` toggles an artist info panel (band bio, location, credits) in both modes.
-* **When art is enabled:** cover images are fetched at size `7` (160 px) only for the
-  *selected* album (debounced together with the detail fetch), resized once to the pane's cell
-  size, and cached as encoded protocol data (LRU of 16; see §2.2). If a fetch fails, the pane
-  falls back to text for that album.
+* **When art is enabled:** the cover is fetched only for the *selected* album (debounced
+  together with the detail fetch). If a fetch fails, the pane falls back to text for that album.
+* **Dynamic size** (`art::layout`): as large as the pane allows, snapped to 6/8/10/12/16/20
+  rows so resizing only re-encodes at step boundaries. It's capped by: 28 columns kept for the
+  text beside it, at most 45 % of the pane height, at least 6 tracklist rows below, and 20 rows.
+  Square in pixels using the terminal's measured cell size. The narrow single-pane layout caps
+  it at 8 rows. Below 6 rows the pane is text-only. Beside a tall cover the text lists one fact
+  per line plus tags and the start of the description.
+* **Detection pitfall (fixed):** ratatui-image 11 reads the capability reply on a helper
+  thread. If the terminal never answers, the thread stays blocked reading stdin and swallows
+  every key typed afterwards. That's what happens in tmux with `allow-passthrough` off: the
+  query is wrapped in passthrough, so tmux drops it. Detection therefore checks
+  `tmux show-options -Apv allow-passthrough` first (off → text-only, with a footer note),
+  and outside tmux it first checks that the terminal answers queries, using crossterm's own
+  reader. ratatui-image 12 uses `poll()` on the calling thread instead; drop the workaround
+  when moving to 12.0 stable.
+* **Fetch and cache:** the smallest Bandcamp size that covers the box (150/350/700 px) is
+  downloaded and kept compressed (LRU of 32 JPEGs, ~10–80 KB each). Encodings are cached per
+  size (LRU of 16). After every draw, `App::after_draw` re-encodes the current cover if the box
+  changed, or re-downloads it bigger if the box outgrew the source. While that happens, the
+  largest earlier encoding that still fits stays on screen.
 Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 
 **Keybindings** (vim and arrow keys both work; `?` shows all of them):
@@ -294,41 +341,110 @@ Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 | key                  | action                                             |
 |----------------------|----------------------------------------------------|
 | `j/k`, `↓/↑`         | move selection                                     |
-| `Tab` / `h/l`        | switch pane                                        |
-| `Enter`              | album list: play album from track 1; tracklist: play that track |
+| `g/G`, `Home/End`    | top / bottom; `PgUp/PgDn`, `Ctrl-u/d` page          |
+| `Tab` / `h/l`        | switch pane (narrow terminals show only the focused pane) |
+| `Enter`              | album list: play album from track 1; tracklist: play that track (jumps within the queue if it's the same album) |
 | `Space`              | play/pause                                         |
 | `n` / `p`            | next / previous track                              |
 | `←/→` or `,`/`.`     | seek −/+10s                                        |
 | `+` / `-`            | volume                                             |
-| `g`                  | genre/tag picker (fuzzy filter)                    |
-| `s` / `t` / `L`      | cycle slice / time / pick location                 |
+| `f`                  | genre/tag picker (fuzzy search; any typed text can be used as a tag) |
+| `s` / `t` / `L`      | cycle sort order / pick time range / pick location |
 | `r`                  | refresh (reshuffles in "surprise me")              |
 | `o`                  | open album in browser (to buy it)                  |
+| `a`                  | autoplay on/off                                    |
 | `i`                  | toggle artist info (bio, location, credits)        |
-| `/`                  | search (stretch)                                   |
-| `q`, `Ctrl-C`        | quit                                               |
+| `/`                  | search artists/albums/tracks; `esc` back to Discover |
+| `q`, `Ctrl-C`        | quit (`Esc` deliberately doesn't quit; it closes popups) |
 
 Infinite scroll: when the selection gets within 10 items of the end and `cursor != null`, fetch the next page.
 
 ## 5. Milestones
 
-1. **Scaffold.** `cargo new`, CI (GitHub Actions: fmt, clippy `-D warnings`, test on
+1. ✅ **Scaffold.** `cargo new`, CI (GitHub Actions: fmt, clippy `-D warnings`, test on
    Linux/macOS), `rustfmt.toml`, `deny.toml` (cargo-deny), README, MIT/Apache-2.0 license.
-2. **API client.** `BandcampClient` with `discover()` and `album()`, serde types and domain
+2. ✅ **API client.** `BandcampClient` with `discover()` and `album()`, serde types and domain
    mapping. Unit tests against recorded fixtures, wiremock integration tests, and an
    `#[ignore]` live smoke test.
-3. **Headless streaming player.** The streaming pipeline from §2.1: bounded ring, decode
+3. ✅ **Headless streaming player.** The streaming pipeline from §2.1: bounded ring, decode
    thread, PCM ring and buffering states. An example binary (`examples/play_album.rs`) streams the
    first discover album end to end. Spike the out-of-window seek (byte-offset reopen) and
    measure the §2.2 budget here, before any UI exists.
-4. **TUI skeleton.** Terminal init/restore (including on panic), event loop, discover list
+4. ✅ **TUI skeleton.** Terminal init/restore (including on panic), event loop, discover list
    with infinite scroll, and the now-playing bar.
-5. **Album pane.** Metadata, tracklist, play album/track, auto-advance, prefetch, greyed-out
+5. ✅ **Album pane.** Metadata, tracklist, play album/track, auto-advance, prefetch, greyed-out
    unstreamable tracks.
-6. **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
-7. **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
+6. ✅ **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
+7. ✅ **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
    expiry, `o` to open in browser, and media keys / MPRIS (stretch, behind a `mpris` feature on Linux).
-8. **Stretch.** Search, play queue across albums, and a "radio" mode that auto-plays the next discover album.
+8. ✅ **Stretch.** Search, "radio" mode (autoplay) and a play queue across albums shipped.
+
+### Polish (milestone 7)
+
+* **Stream link expiry.** Two layers. Mid-track (e.g. after a pause of more than a day), the
+  stream holds a resolved CDN URL. On 403/410 it asks `/api/stream/1/refresh` (which only
+  accepts genuine CDN URLs) and resumes at the same byte. When a track *starts* from an expired
+  `stream_redirect` URL (404, but its own `ts` is in the past, which is how it's told apart from
+  a missing file), the player stops instead of failing through the album. The app re-fetches
+  the album and resumes at that track, once per album until playback works again.
+* **Cover art** (see the album-art section above): detection after entering the alternate screen;
+  `auto`, `on` or `off`; never in tmux under `auto`; never half-blocks. Covers are fetched at
+  150 px only for the selected release, decoded and encoded off the UI thread, and cached as
+  encoded protocol data (16 entries). A placeholder of the same size shows while loading, so
+  the layout doesn't jump. Covers are hidden when the pane is too narrow. When disabled, nothing
+  is fetched or allocated.
+* `?` help overlay generated from one table of bindings, and a test keeps it in sync with the
+  footer hints. `o` opens the release with `open` / `xdg-open` / `start`.
+* `config.toml` (hand-edited, strict: unknown keys and bad values stop startup with the line and
+  column) is kept separate from `state.toml` (app-written, lenient).
+* **Autoplay** ("radio mode"), on by default (`autoplay = true` in `config.toml`; `a` toggles
+  it for the session). When the queue ends (last track finished or `n` on it), the next
+  Discover release after the finished one plays. Pre-orders are skipped, and so are releases
+  that turn out unplayable or fail to load; it gives up after 5 in a row. At the end of the
+  loaded list it fetches the next page and continues. The selection follows only if the user
+  was still on the finished album. Choosing something yourself cancels a pending autoplay.
+* **Search** (`/`). A popup with live results as you type (debounced 250 ms; stale answers
+  dropped by generation) from `bcsearch_public_api/1/autocomplete_elastic`: up to 50 artists,
+  albums and tracks, no paging. `⏎` on a release replaces the left list with the search's
+  release results. `⏎` on an artist loads `mobile/25/band_details` and lists their
+  discography. The Discover list and selection are set aside and restored by `esc` without
+  reloading; changing a filter also returns to Discover. Album pane, play, autoplay, art and
+  `o` all work on these lists (`o` uses the album's own URL once loaded, since discography
+  entries only carry the artist page).
+* Not done: media keys (deliberately skipped for now; findings
+  below, for whenever it's picked up).
+
+### Play queue
+
+* `e` adds the selected release, or the selected track when the tracklist has focus; `E` adds it
+  as next. If nothing is playing, the entry starts right away. `u` opens the queue: `⏎` plays
+  the highlighted entry now (the rest stays queued), `d` removes, `K`/`J` move, `c` clears,
+  `esc` closes, and transport keys keep working. The now-playing bar shows
+  `next: … (+N)`, and queued releases get a `+` in the list.
+* When a release ends (or `n` on its last track), the first entry plays; autoplay only takes
+  over when the queue is empty, continuing after the last thing played.
+* Entries are references (ids, names, link), not stream URLs, so a saved queue never goes
+  stale. Details are fetched when an entry's turn comes, prefetched during the last 30 s of the
+  current release. Unplayable or failing entries are skipped.
+* A single track is played by sending the whole album with only that track streamable (the
+  player skips the rest); the "same album, just jump" shortcut is off in that mode, and expired
+  links on it are re-fetched in the same single-track mode.
+* Saved in `state.toml` as `[[queue]]` tables on every change, restored at startup without
+  starting playback. Capped at 200 entries.
+
+### Media keys: research notes (not implemented)
+
+* **macOS** needs a run loop on the main thread: MediaPlayer delivers remote commands to the
+  main dispatch queue. A prototype showed `core-foundation`'s safe `CFRunLoop` API services it
+  with no CPU cost, so the TUI would move to a second thread on macOS and exit the process
+  itself when done. Unverified: whether macOS routes media keys to a terminal process that
+  isn't a full Cocoa app (needs a real keypress to test; the fallback is a background Cocoa app
+  setup).
+* **Options compared:** `souvlaki` everywhere (+22 crates of a legacy Apple binding stack on
+  macOS; Linux uses libdbus); `objc2-media-player` directly on macOS (+1 crate, the rest is
+  already in the tree via cpal, but every call is `unsafe`); `mpris-server` on Linux (pure
+  Rust, ~90 crates). Leaning: `objc2-media-player` on macOS plus `souvlaki` on Linux only
+  (platform-specific dependency). Windows would be skipped (it needs a real window).
 
 ## 6. Best practices checklist
 
