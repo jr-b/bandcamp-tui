@@ -41,7 +41,8 @@ id_type!(
 );
 
 /// Whether a release is a whole album or a standalone track.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum TralbumKind {
     Album,
     Track,

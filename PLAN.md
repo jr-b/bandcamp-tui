@@ -377,7 +377,7 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
 6. ✅ **Filters.** Genre → subgenre picker, slice, time and location. Persist the last-used filters in config.
 7. ✅ **Polish.** Album art on capable terminals (detection, override, text-only layout), help overlay, error toasts, stream URL refresh on
    expiry, `o` to open in browser, and media keys / MPRIS (stretch, behind a `mpris` feature on Linux).
-8. **Stretch.** Play queue across albums. (✅ Search and "radio" mode (autoplay) shipped.)
+8. ✅ **Stretch.** Search, "radio" mode (autoplay) and a play queue across albums shipped.
 
 ### Polish (milestone 7)
 
@@ -411,8 +411,26 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
   reloading; changing a filter also returns to Discover. Album pane, play, autoplay, art and
   `o` all work on these lists (`o` uses the album's own URL once loaded, since discography
   entries only carry the artist page).
-* Not done (stretch): cross-album queue, and media keys (deliberately skipped for now; findings
+* Not done: media keys (deliberately skipped for now; findings
   below, for whenever it's picked up).
+
+### Play queue
+
+* `e` adds the selected release, or the selected track when the tracklist has focus; `E` adds it
+  as next. If nothing is playing, the entry starts right away. `u` opens the queue: `⏎` plays
+  the highlighted entry now (the rest stays queued), `d` removes, `K`/`J` move, `c` clears,
+  `esc` closes, and transport keys keep working. The now-playing bar shows
+  `next: … (+N)`, and queued releases get a `+` in the list.
+* When a release ends (or `n` on its last track), the first entry plays; autoplay only takes
+  over when the queue is empty, continuing after the last thing played.
+* Entries are references (ids, names, link), not stream URLs, so a saved queue never goes
+  stale. Details are fetched when an entry's turn comes, prefetched during the last 30 s of the
+  current release. Unplayable or failing entries are skipped.
+* A single track is played by sending the whole album with only that track streamable (the
+  player skips the rest); the "same album, just jump" shortcut is off in that mode, and expired
+  links on it are re-fetched in the same single-track mode.
+* Saved in `state.toml` as `[[queue]]` tables on every change, restored at startup without
+  starting playback. Capped at 200 entries.
 
 ### Media keys: research notes (not implemented)
 

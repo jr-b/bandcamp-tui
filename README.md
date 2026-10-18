@@ -12,7 +12,8 @@ streaming full albums. No account or login needed.
   in about 30 MB of memory and well under 1 % CPU
 - Search artists, albums and tracks (`/`), and browse an artist's whole discography
 - Album and artist info, tracklists, play from any track
-- Autoplay: when an album ends, the next Discover release starts (toggle with `a`)
+- A play queue across albums: add releases or single tracks while something plays
+- Autoplay: when the queue runs out, the next Discover release starts (toggle with `a`)
 - Keyboard-driven, with vim and arrow keys; remembers your filters and volume
 - Cover art on terminals with kitty, iTerm2 or sixel graphics, sized to the window (text-only
   everywhere else)
@@ -51,7 +52,9 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `n` / `p` | next / previous track |
 | `←` / `→` | seek 10 s |
 | `+` / `-` | volume |
-| `a` | autoplay on/off (continue with the next release when an album ends) |
+| `e` / `E` | add the release (or, in the tracklist, the track) to the queue / play it next |
+| `u` | the queue: `⏎` play now, `d` remove, `K`/`J` move, `c` clear |
+| `a` | autoplay on/off (continue with the next release when the queue runs out) |
 | `tab`, `h` / `l` | switch pane |
 | `i` | album about / credits / artist bio |
 | `o` | open the release on bandcamp.com (to buy it) |
@@ -62,7 +65,7 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `r` | refresh |
 | `q`, `ctrl-c` | quit |
 
-Filters and volume are remembered in `state.toml`, next to the log file
+Filters, volume and the queue are remembered in `state.toml`, next to the log file
 (`~/Library/Application Support/bandcamp-tui/` on macOS, `~/.local/share/bandcamp-tui/` on Linux).
 
 ## Configuration

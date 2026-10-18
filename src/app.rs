@@ -17,6 +17,7 @@ use crate::bandcamp::{
 };
 use crate::picker::{Picker, PickerKind};
 use crate::player::{PlaybackState, PlayerEvent, QueueTrack, Status};
+use crate::queue::{Queue, QueueEntry};
 use crate::settings::Settings;
 
 /// Fetch the next page when the selection gets this close to the end of the list.
@@ -32,6 +33,9 @@ const VOLUME_STEP: f32 = 0.05;
 const SEEK_STEP_MS: i64 = 10_000;
 /// Autoplay gives up after this many releases in a row that can't be played.
 const AUTOPLAY_MAX_SKIPS: u8 = 5;
+/// Fetch the next queue entry's details this long before the current release ends, so the
+/// switch only waits for the stream to start.
+const QUEUE_PREFETCH: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -57,6 +61,17 @@ pub enum Action {
     OpenSearch,
     /// Show an informational message in the footer.
     Notice(String),
+    /// Add the selected release (or, in the tracklist, track) to the end of the queue.
+    Enqueue,
+    /// Same, but play it next.
+    EnqueueNext,
+    /// Open the queue popup (`u`).
+    OpenQueue,
+    /// Queue popup: remove / move the highlighted entry, or clear everything.
+    QueueRemove,
+    QueueMoveUp,
+    QueueMoveDown,
+    QueueClear,
     /// Leave search results or an artist's releases and return to Discover.
     BackToDiscover,
     /// The debounce delay for search `generation` has passed.
@@ -200,6 +215,13 @@ impl DiscoverList {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Popup {
+    Queue,
+    Search,
+    Help,
+}
+
 /// What the release list is showing.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ListSource {
@@ -322,6 +344,14 @@ pub struct App {
     autoplay_after: Option<ItemId>,
     /// The album the player's queue was built from.
     pub now_playing: Option<Arc<Album>>,
+    /// Set when only one track of `now_playing` is playing (a single-track queue entry).
+    now_playing_only: Option<usize>,
+    /// Releases and tracks to play after the current one.
+    pub queue: Queue,
+    /// The queue popup, if open, with its highlighted entry.
+    pub queue_view: Option<ListState>,
+    /// The queue entry whose details are loading, to play when they arrive: (release, track).
+    queue_attempt: Option<(ItemId, Option<usize>)>,
     pub player: Status,
     pub player_available: bool,
     pub message: Option<Message>,
@@ -364,6 +394,10 @@ impl App {
             autoplay_skips: 0,
             autoplay_after: None,
             now_playing: None,
+            now_playing_only: None,
+            queue: Queue::default(),
+            queue_view: None,
+            queue_attempt: None,
             player: Status::default(),
             player_available,
             message: None,
@@ -451,6 +485,11 @@ impl App {
         {
             return effects;
         }
+        if self.queue_view.is_some()
+            && let Some(effects) = self.queue_update(&action)
+        {
+            return effects;
+        }
         match action {
             Action::Quit => {
                 self.should_quit = true;
@@ -466,44 +505,22 @@ impl App {
                 Focus::Discover => self.play_selected_release(),
                 Focus::Album => self.play_selected_track(),
             },
-            Action::ToggleFocus => {
-                self.focus = match self.focus {
-                    Focus::Discover => Focus::Album,
-                    Focus::Album => Focus::Discover,
-                };
-                vec![]
-            }
-            Action::FocusDiscover => {
-                self.focus = Focus::Discover;
-                vec![]
-            }
-            Action::FocusAlbum => {
-                self.focus = Focus::Album;
-                vec![]
-            }
-            Action::ToggleInfo => {
-                self.album_pane.show_info = !self.album_pane.show_info;
-                self.album_pane.info_scroll = 0;
+            Action::ToggleFocus
+            | Action::FocusDiscover
+            | Action::FocusAlbum
+            | Action::ToggleInfo
+            | Action::CloseHelp => {
+                self.view_update(&action);
                 vec![]
             }
             Action::ToggleAutoplay => self.toggle_autoplay(),
-            Action::OpenSearch => {
-                self.search_open = true;
-                vec![]
-            }
+            Action::Enqueue => self.enqueue(false),
+            Action::EnqueueNext => self.enqueue(true),
+            Action::OpenQueue => self.open_popup(Popup::Queue),
+            Action::OpenSearch => self.open_popup(Popup::Search),
             Action::BackToDiscover => self.back_to_discover(),
-            Action::SearchDue(generation) => self.search_due(generation),
-            Action::SearchLoaded { generation, result } => self.search_loaded(generation, result),
-            Action::ArtistLoaded { band_id, result } => self.artist_loaded(band_id, result),
             Action::OpenInBrowser => self.open_in_browser(),
-            Action::ShowHelp => {
-                self.show_help = true;
-                vec![]
-            }
-            Action::CloseHelp => {
-                self.show_help = false;
-                vec![]
-            }
+            Action::ShowHelp => self.open_popup(Popup::Help),
             Action::TogglePause => self.player_command(PlayerCommand::TogglePause),
             Action::NextTrack => self.player_command(PlayerCommand::Next),
             Action::PreviousTrack => self.player_command(PlayerCommand::Previous),
@@ -530,14 +547,21 @@ impl App {
             | Action::TypeChar(_)
             | Action::Backspace
             | Action::ClearInput
-            | Action::Resize => vec![],
+            | Action::Resize
+            | Action::QueueRemove
+            | Action::QueueMoveUp
+            | Action::QueueMoveDown
+            | Action::QueueClear => vec![],
             other @ (Action::DiscoverLoaded { .. }
             | Action::AlbumDue(_)
             | Action::AlbumLoaded { .. }
             | Action::ArtFetched { .. }
             | Action::ArtEncoded { .. }
             | Action::Player { .. }
-            | Action::Notice(_)) => self.background_update(other),
+            | Action::Notice(_)
+            | Action::SearchDue(_)
+            | Action::SearchLoaded { .. }
+            | Action::ArtistLoaded { .. }) => self.background_update(other),
         }
     }
 
@@ -560,6 +584,9 @@ impl App {
                 self.info(text);
                 vec![]
             }
+            Action::SearchDue(generation) => self.search_due(generation),
+            Action::SearchLoaded { generation, result } => self.search_loaded(generation, result),
+            Action::ArtistLoaded { band_id, result } => self.artist_loaded(band_id, result),
             _ => vec![],
         }
     }
@@ -603,7 +630,9 @@ impl App {
     /// Current filters and volume, to restore next time.
     #[must_use]
     pub fn settings(&self) -> Settings {
-        Settings::from_state(&self.query, self.player.volume)
+        let mut settings = Settings::from_state(&self.query, self.player.volume);
+        settings.queue = self.queue.to_saved();
+        settings
     }
 
     fn save_settings(&self) -> Effect {
@@ -898,22 +927,42 @@ impl App {
     }
 
     fn fetch_album(&mut self, id: ItemId) -> Option<Effect> {
+        let item = self.discover.items.iter().find(|i| i.id == id)?;
+        let (band_id, kind) = (item.band_id, item.kind);
+        self.fetch_release(id, band_id, kind)
+    }
+
+    /// Fetches details for any release, listed or not (e.g. a queue entry).
+    fn fetch_release(&mut self, id: ItemId, band_id: BandId, kind: TralbumKind) -> Option<Effect> {
         if self.albums.peek(id).is_some() || self.album_requests.contains(&id) {
             return None;
         }
-        let item = self.discover.items.iter().find(|i| i.id == id)?;
-        let effect = Effect::FetchAlbum {
-            band_id: item.band_id,
-            id,
-            kind: item.kind,
-        };
         self.album_errors.remove(&id);
         self.album_requests.insert(id);
-        Some(effect)
+        Some(Effect::FetchAlbum { band_id, id, kind })
     }
 
     fn album_loaded(&mut self, id: ItemId, result: Result<Box<Album>, String>) -> Vec<Effect> {
         self.album_requests.remove(&id);
+        if let Some((_, track)) = self.queue_attempt.filter(|(q, _)| *q == id) {
+            self.queue_attempt = None;
+            return match result {
+                Ok(album) => {
+                    let album: Arc<Album> = Arc::from(album);
+                    self.albums.insert(id, Arc::clone(&album));
+                    if self.album_pane.for_album == Some(id) {
+                        self.album_pane.for_album = None;
+                    }
+                    self.sync_album_pane();
+                    self.play_queue_entry(&album, track)
+                }
+                Err(e) => {
+                    self.album_errors.insert(id, e.clone());
+                    self.error(format!("Skipped a queued release: {e}"));
+                    self.next_from_queue(Some(id))
+                }
+            };
+        }
         let from_autoplay = self.autoplay_attempt == Some(id);
         if from_autoplay {
             self.autoplay_attempt = None;
@@ -1013,12 +1062,16 @@ impl App {
             self.error("No audio output available.");
             return vec![];
         }
-        // Same album: jump within the existing queue instead of rebuilding it.
-        if self.now_playing.as_ref().is_some_and(|a| a.id == album.id) {
+        // Same album: jump within the existing queue instead of rebuilding it (unless only one
+        // of its tracks is loaded, from a single-track queue entry).
+        if self.now_playing_only.is_none()
+            && self.now_playing.as_ref().is_some_and(|a| a.id == album.id)
+        {
             return vec![Effect::Player(PlayerCommand::PlayIndex(start))];
         }
         let queue = album.tracks.iter().map(QueueTrack::from).collect();
         self.now_playing = Some(Arc::clone(album));
+        self.now_playing_only = None;
         vec![Effect::Player(PlayerCommand::PlayQueue(queue, start))]
     }
 
@@ -1050,10 +1103,8 @@ impl App {
             }
             Some(PlayerEvent::QueueEnded) => {
                 let finished = self.now_playing.take().map(|a| a.id);
-                if self.autoplay {
-                    self.autoplay_skips = 0;
-                    return self.autoplay_next(finished);
-                }
+                self.now_playing_only = None;
+                return self.next_from_queue(finished);
             }
             _ => {}
         }
@@ -1066,7 +1117,243 @@ impl App {
         {
             self.album_pane.tracks.select(Some(index));
         }
+        self.prefetch_queue_front().into_iter().collect()
+    }
+
+    // ---- Queue ---------------------------------------------------------------------------------
+
+    /// Focus, the info view and the help overlay: view state only, never any effects.
+    fn view_update(&mut self, action: &Action) {
+        match action {
+            Action::ToggleFocus => {
+                self.focus = match self.focus {
+                    Focus::Discover => Focus::Album,
+                    Focus::Album => Focus::Discover,
+                };
+            }
+            Action::FocusDiscover => self.focus = Focus::Discover,
+            Action::FocusAlbum => self.focus = Focus::Album,
+            Action::ToggleInfo => {
+                self.album_pane.show_info = !self.album_pane.show_info;
+                self.album_pane.info_scroll = 0;
+            }
+            Action::CloseHelp => self.show_help = false,
+            _ => {}
+        }
+    }
+
+    fn open_popup(&mut self, popup: Popup) -> Vec<Effect> {
+        match popup {
+            Popup::Queue => self.queue_view = Some(ListState::default().with_selected(Some(0))),
+            Popup::Search => self.search_open = true,
+            Popup::Help => self.show_help = true,
+        }
         vec![]
+    }
+
+    /// The next queue entry and how many more follow it, for the now-playing bar.
+    #[must_use]
+    pub fn up_next(&self) -> Option<(&QueueEntry, usize)> {
+        let front = self.queue.front()?;
+        Some((front, self.queue.len() - 1))
+    }
+
+    /// `e` / `E`: queue the selected track (in the tracklist) or release.
+    fn enqueue(&mut self, next: bool) -> Vec<Effect> {
+        let entry = match (self.focus, self.album_view()) {
+            (Focus::Album, AlbumView::Loaded(album)) if !self.album_pane.show_info => {
+                let Some(index) = self.album_pane.tracks.selected() else {
+                    return vec![];
+                };
+                if !album
+                    .tracks
+                    .get(index)
+                    .is_some_and(crate::bandcamp::Track::is_playable)
+                {
+                    self.error("That track isn't available for streaming.");
+                    return vec![];
+                }
+                QueueEntry::track(album, index)
+            }
+            _ => self.selected().map(QueueEntry::release),
+        };
+        let Some(entry) = entry else {
+            return vec![];
+        };
+        if !self.player_available {
+            self.error("No audio output available.");
+            return vec![];
+        }
+        // Nothing playing: there's no "after" to wait for, so start it now.
+        if self.now_playing.is_none() && self.pending_play.is_none() && self.queue_attempt.is_none()
+        {
+            let label = entry.label();
+            let effects = self.start_queue_entry(&entry);
+            self.info(format!("Playing {label}"));
+            return effects;
+        }
+        let label = entry.label();
+        let added = if next {
+            self.queue.push_front(entry)
+        } else {
+            self.queue.push_back(entry)
+        };
+        if !added {
+            self.error(format!(
+                "The queue is full ({} entries).",
+                crate::queue::MAX_ENTRIES
+            ));
+            return vec![];
+        }
+        self.info(if next {
+            format!("Playing next: {label}")
+        } else {
+            format!("Added to queue: {label} ({} queued)", self.queue.len())
+        });
+        vec![self.save_settings()]
+    }
+
+    /// Handles `action` while the queue popup is open; `None` means "handle normally".
+    fn queue_update(&mut self, action: &Action) -> Option<Vec<Effect>> {
+        let view = self.queue_view.as_mut()?;
+        let len = self.queue.len();
+        let selected = view.selected().unwrap_or(0).min(len.saturating_sub(1));
+        let mut changed = false;
+        match action {
+            Action::Up => move_list(view, len, -1),
+            Action::Down => move_list(view, len, 1),
+            Action::PageUp => move_list(view, len, -10),
+            Action::PageDown => move_list(view, len, 10),
+            Action::Top => move_list(view, len, isize::MIN),
+            Action::Bottom => move_list(view, len, isize::MAX),
+            Action::ClosePopup | Action::OpenQueue => self.queue_view = None,
+            Action::QueueRemove => {
+                changed = self.queue.remove(selected).is_some();
+                view.select(Some(selected.min(self.queue.len().saturating_sub(1))));
+            }
+            Action::QueueMoveUp => {
+                if let Some(i) = self.queue.move_up(selected) {
+                    view.select(Some(i));
+                    changed = true;
+                }
+            }
+            Action::QueueMoveDown => {
+                if let Some(i) = self.queue.move_down(selected) {
+                    view.select(Some(i));
+                    changed = true;
+                }
+            }
+            Action::QueueClear => {
+                changed = !self.queue.is_empty();
+                self.queue.clear();
+            }
+            Action::Play => {
+                // Play the highlighted entry now; the rest of the queue follows it.
+                self.queue_view = None;
+                let Some(entry) = self.queue.remove(selected) else {
+                    return Some(vec![]);
+                };
+                let mut effects = self.start_queue_entry(&entry);
+                effects.push(self.save_settings());
+                return Some(effects);
+            }
+            // Quitting, and transport keys, work as usual with the popup open.
+            Action::Quit | Action::TogglePause | Action::NextTrack | Action::PreviousTrack => {
+                return None;
+            }
+            _ if action.is_user_input() => {}
+            _ => return None,
+        }
+        Some(if changed {
+            vec![self.save_settings()]
+        } else {
+            vec![]
+        })
+    }
+
+    /// After a release ends: the next queue entry, else autoplay (if on).
+    fn next_from_queue(&mut self, finished: Option<ItemId>) -> Vec<Effect> {
+        if let Some(entry) = self.queue.pop_front() {
+            let mut effects = self.start_queue_entry(&entry);
+            effects.push(self.save_settings());
+            return effects;
+        }
+        if self.autoplay {
+            self.autoplay_skips = 0;
+            return self.autoplay_next(finished);
+        }
+        vec![]
+    }
+
+    fn start_queue_entry(&mut self, entry: &QueueEntry) -> Vec<Effect> {
+        self.cancel_autoplay_attempt();
+        self.pending_play = None;
+        if let Some(album) = self.albums.get(entry.id) {
+            return self.play_queue_entry(&album, entry.track);
+        }
+        self.queue_attempt = Some((entry.id, entry.track));
+        self.info(format!("Up next: {}", entry.label()));
+        self.fetch_release(entry.id, entry.band_id, entry.kind)
+            .into_iter()
+            .collect()
+    }
+
+    /// Plays a queue entry whose details are loaded: the whole album, or just `only`.
+    fn play_queue_entry(&mut self, album: &Arc<Album>, only: Option<usize>) -> Vec<Effect> {
+        let Some(index) = only else {
+            if !album.has_playable_tracks() {
+                self.error(format!("Skipped {}: nothing streamable.", album.title));
+                return self.next_from_queue(Some(album.id));
+            }
+            // Always rebuild: the same album may be loaded in single-track mode.
+            self.now_playing = None;
+            return self.play_album(album, 0);
+        };
+        if !album
+            .tracks
+            .get(index)
+            .is_some_and(crate::bandcamp::Track::is_playable)
+        {
+            self.error(format!("Skipped a queued track from {}.", album.title));
+            return self.next_from_queue(Some(album.id));
+        }
+        if !self.player_available {
+            return vec![];
+        }
+        // The whole album with only this track streamable: the player skips the rest, and
+        // track numbering in the display stays right.
+        let queue = album
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let mut q = QueueTrack::from(t);
+                if i != index {
+                    q.url = None;
+                }
+                q
+            })
+            .collect();
+        self.now_playing = Some(Arc::clone(album));
+        self.now_playing_only = Some(index);
+        vec![Effect::Player(PlayerCommand::PlayQueue(queue, index))]
+    }
+
+    /// Near the end of the current release, fetch the next entry's details so the switch
+    /// only waits for the stream.
+    fn prefetch_queue_front(&mut self) -> Option<Effect> {
+        let next = self.queue.front()?;
+        let (album, index) = self.current_track()?;
+        let last_track = self.now_playing_only.is_some()
+            || !album.tracks[index + 1..]
+                .iter()
+                .any(crate::bandcamp::Track::is_playable);
+        let remaining = self.player.duration.saturating_sub(self.player.position);
+        if !last_track || self.player.duration.is_zero() || remaining > QUEUE_PREFETCH {
+            return None;
+        }
+        let (id, band_id, kind) = (next.id, next.band_id, next.kind);
+        self.fetch_release(id, band_id, kind)
     }
 
     fn toggle_autoplay(&mut self) -> Vec<Effect> {
@@ -1287,10 +1574,11 @@ impl App {
 
     // ---- Autoplay ------------------------------------------------------------------------------
 
-    /// The user chose something to play: forget what autoplay was about to start.
+    /// The user chose something to play: forget what autoplay or the queue was about to start.
     fn cancel_autoplay_attempt(&mut self) {
         self.autoplay_attempt = None;
         self.autoplay_after = None;
+        self.queue_attempt = None;
     }
 
     /// Plays the first playable Discover release after `after` (or from the selection if
@@ -1380,7 +1668,12 @@ impl App {
         self.refetched_for_expiry.insert(album.id);
         self.albums.remove(album.id);
         self.album_requests.insert(album.id);
-        self.pending_play = Some((album.id, index));
+        // Resume the same way: a single queued track stays a single track.
+        if self.now_playing_only.take().is_some() {
+            self.queue_attempt = Some((album.id, Some(index)));
+        } else {
+            self.pending_play = Some((album.id, index));
+        }
         self.info("Stream links expired; refreshing…");
         vec![Effect::FetchAlbum {
             band_id: album.band.id,
@@ -2526,6 +2819,244 @@ mod tests {
             app.release_size(&other),
             (other.track_count, other.duration)
         );
+    }
+
+    /// Starts playing the first release (Ocean Company) so the queue has something to wait for.
+    fn playing_first() -> App {
+        let mut app = with_album();
+        app.update(Action::Play);
+        assert!(app.now_playing.is_some());
+        app
+    }
+
+    fn queue_ended(app: &mut App) -> Vec<Effect> {
+        app.update(Action::Player {
+            event: Some(PlayerEvent::QueueEnded),
+            status: Status::default(),
+        })
+    }
+
+    fn queue_ids(app: &App) -> Vec<ItemId> {
+        app.queue.iter().map(|e| e.id).collect()
+    }
+
+    #[test]
+    fn enqueue_adds_without_interrupting_and_saves() {
+        let mut app = playing_first();
+        app.update(Action::Down);
+        let second = app.selected().unwrap().id;
+        let effects = app.update(Action::Enqueue);
+        assert!(
+            matches!(&effects[..], [Effect::SaveSettings(s)] if s.queue.len() == 1),
+            "{effects:?}"
+        );
+        assert_eq!(queue_ids(&app), [second]);
+        assert_eq!(
+            app.now_playing.as_ref().unwrap().title,
+            "Ocean Company",
+            "still playing"
+        );
+        assert!(
+            app.message
+                .as_ref()
+                .unwrap()
+                .text
+                .starts_with("Added to queue")
+        );
+
+        // E puts it first.
+        app.update(Action::Down);
+        let third = app.selected().unwrap().id;
+        app.update(Action::EnqueueNext);
+        assert_eq!(queue_ids(&app), [third, second]);
+        assert_eq!(
+            app.up_next().map(|(e, more)| (e.id, more)),
+            Some((third, 1))
+        );
+    }
+
+    #[test]
+    fn enqueue_with_nothing_playing_starts_it() {
+        let mut app = with_album();
+        let effects = app.update(Action::Enqueue);
+        assert!(
+            matches!(&effects[..], [Effect::Player(PlayerCommand::PlayQueue(q, 0))] if q.len() == 10),
+            "{effects:?}"
+        );
+        assert!(app.queue.is_empty());
+    }
+
+    #[test]
+    fn the_queue_plays_before_autoplay() {
+        let mut app = playing_first();
+        // Queue the third release; autoplay alone would pick the second.
+        app.update(Action::Down);
+        app.update(Action::Down);
+        let third = app.selected().unwrap().id;
+        app.update(Action::Enqueue);
+        let effects = queue_ended(&mut app);
+        assert_eq!(fetched_album(&effects), Some(third), "{effects:?}");
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::SaveSettings(s) if s.queue.is_empty()))
+        );
+        assert!(app.queue.is_empty());
+
+        let mut album = album_fixture("album");
+        album.id = third;
+        let effects = app.update(Action::AlbumLoaded {
+            id: third,
+            result: Ok(album),
+        });
+        assert!(
+            matches!(
+                &effects[..],
+                [Effect::Player(PlayerCommand::PlayQueue(_, 0))]
+            ),
+            "{effects:?}"
+        );
+        // Queue empty now: the next end falls through to autoplay, which continues after the
+        // queued release (so the fourth), not after the one played before it.
+        let fourth = app.discover.items[3].id;
+        let effects = queue_ended(&mut app);
+        assert_eq!(fetched_album(&effects), Some(fourth), "{effects:?}");
+    }
+
+    #[test]
+    fn a_queued_track_plays_alone() {
+        let mut app = playing_first();
+        // Queue track 3 from the tracklist (the same album, already cached).
+        app.update(Action::FocusAlbum);
+        app.update(Action::Down);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        let entry = app.queue.front().unwrap().clone();
+        assert_eq!(
+            (entry.track, entry.track_title.as_deref()),
+            (Some(2), Some("Passage"))
+        );
+
+        let effects = queue_ended(&mut app);
+        let [
+            Effect::Player(PlayerCommand::PlayQueue(queue, 2)),
+            Effect::SaveSettings(_),
+        ] = &effects[..]
+        else {
+            panic!("{effects:?}");
+        };
+        let playable: Vec<usize> = (0..queue.len())
+            .filter(|&i| queue[i].url.is_some())
+            .collect();
+        assert_eq!(playable, [2], "only the queued track is streamable");
+
+        // ⏎ on the album afterwards plays all of it again, not just that track.
+        app.update(Action::FocusDiscover);
+        app.update(Action::Top);
+        let effects = app.update(Action::Play);
+        assert!(
+            matches!(&effects[..], [Effect::Player(PlayerCommand::PlayQueue(q, 0))]
+                if q.iter().filter(|t| t.url.is_some()).count() == 10),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn unplayable_queue_entries_are_skipped() {
+        let mut app = playing_first();
+        let (second, third) = (app.discover.items[1].id, app.discover.items[2].id);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        let effects = queue_ended(&mut app);
+        assert_eq!(fetched_album(&effects), Some(second));
+        // The second turns out to be a pre-order: move on to the third.
+        let effects = app.update(Action::AlbumLoaded {
+            id: second,
+            result: Ok(album_fixture("preorder")),
+        });
+        assert_eq!(fetched_album(&effects), Some(third), "{effects:?}");
+    }
+
+    #[test]
+    fn queue_popup_edits_and_plays() {
+        let mut app = playing_first();
+        for _ in 0..3 {
+            app.update(Action::Down);
+            app.update(Action::Enqueue);
+        }
+        let ids = queue_ids(&app);
+        app.update(Action::OpenQueue);
+        // Keys go to the popup: Down moves its selection, not the list's.
+        let list_selection = app.table.selected();
+        app.update(Action::Down);
+        assert_eq!(app.table.selected(), list_selection);
+        app.update(Action::QueueMoveUp);
+        assert_eq!(queue_ids(&app), [ids[1], ids[0], ids[2]]);
+        app.update(Action::Bottom);
+        assert!(matches!(
+            app.update(Action::QueueRemove)[..],
+            [Effect::SaveSettings(_)]
+        ));
+        assert_eq!(queue_ids(&app), [ids[1], ids[0]]);
+        // ⏎ plays the highlighted entry now and closes the popup; the rest stays queued.
+        app.update(Action::Top);
+        let effects = app.update(Action::Play);
+        assert_eq!(fetched_album(&effects), Some(ids[1]));
+        assert!(app.queue_view.is_none());
+        assert_eq!(queue_ids(&app), [ids[0]]);
+        // Transport keys still reach the player with the popup open.
+        app.update(Action::OpenQueue);
+        assert_eq!(
+            app.update(Action::TogglePause),
+            [Effect::Player(PlayerCommand::TogglePause)]
+        );
+        app.update(Action::QueueClear);
+        assert!(app.queue.is_empty());
+    }
+
+    #[test]
+    fn queue_survives_a_restart_in_settings() {
+        let mut app = playing_first();
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        let saved = app.settings().queue;
+        assert_eq!(saved.len(), 1);
+        let (mut restored, _) = App::new(DiscoverQuery::default(), true);
+        restored.queue = Queue::from_saved(saved);
+        assert_eq!(queue_ids(&restored), queue_ids(&app));
+        assert!(
+            restored.now_playing.is_none(),
+            "restoring doesn't start playback"
+        );
+    }
+
+    #[test]
+    fn next_entry_is_prefetched_near_the_end() {
+        let mut app = playing_first();
+        app.update(Action::Down);
+        let next = app.selected().unwrap().id;
+        app.update(Action::Enqueue);
+        let status = |index, position| Status {
+            state: PlaybackState::Playing,
+            index: Some(index),
+            position: std::time::Duration::from_secs(position),
+            duration: std::time::Duration::from_secs(200),
+            volume: 1.0,
+        };
+        // Early on the last track, or late on an earlier one: nothing yet.
+        let update = |app: &mut App, index, position| {
+            app.update(Action::Player {
+                event: None,
+                status: status(index, position),
+            })
+        };
+        assert_eq!(update(&mut app, 9, 60), []);
+        assert_eq!(update(&mut app, 5, 190), []);
+        // The last 30 s of the last track: fetch the next entry's details once.
+        assert_eq!(fetched_album(&update(&mut app, 9, 175)), Some(next));
+        assert_eq!(update(&mut app, 9, 180), [], "already in flight");
     }
 
     #[test]

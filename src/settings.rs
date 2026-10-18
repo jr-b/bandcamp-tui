@@ -9,6 +9,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::bandcamp::{DiscoverQuery, Slice};
+use crate::queue::QueueEntry;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -16,6 +17,9 @@ pub struct Settings {
     pub discover: DiscoverSettings,
     /// `0.0`–`1.0`.
     pub volume: f32,
+    /// The play queue, restored at startup without starting playback.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub queue: Vec<QueueEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -33,6 +37,7 @@ impl Default for Settings {
         Self {
             discover: DiscoverSettings::default(),
             volume: 1.0,
+            queue: Vec::new(),
         }
     }
 }
@@ -97,6 +102,7 @@ impl Settings {
                 geoname_id: query.geoname_id,
             },
             volume,
+            queue: Vec::new(),
         }
     }
 }
@@ -129,6 +135,36 @@ mod tests {
         assert_eq!(loaded.query(), query);
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("slice = \"new\""), "{text}");
+    }
+
+    #[test]
+    fn round_trips_the_queue() {
+        let path = temp_path("queue");
+        let entry = QueueEntry {
+            id: crate::bandcamp::ItemId(3_457_085_593),
+            band_id: crate::bandcamp::BandId(2_686_449_259),
+            kind: crate::bandcamp::TralbumKind::Album,
+            title: "Ocean Company".into(),
+            artist: "Ocean Company".into(),
+            art_id: Some(crate::bandcamp::ArtId(4_072_557_709)),
+            url: "https://hotelpoolsmusic.bandcamp.com/album/ocean-company"
+                .parse()
+                .unwrap(),
+            track: None,
+            track_title: None,
+        };
+        let single = QueueEntry {
+            track: Some(1),
+            track_title: Some("Joyride".into()),
+            ..entry.clone()
+        };
+        let mut settings = Settings::from_state(&DiscoverQuery::default(), 0.5);
+        settings.queue = vec![entry, single];
+        settings.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[[queue]]"), "{text}");
+        assert!(text.contains("kind = \"album\""), "{text}");
+        assert_eq!(Settings::load(&path), settings);
     }
 
     #[test]

@@ -6,6 +6,7 @@ mod discover;
 mod help;
 mod now_playing;
 mod picker;
+mod queue;
 mod search;
 
 use ratatui::Frame;
@@ -17,7 +18,7 @@ use ratatui::widgets::{Block, Paragraph};
 use crate::app::{App, Focus, ListSource, MessageKind};
 use crate::bandcamp::{Filters, Slice};
 use crate::format;
-use crate::input::{HINTS, PICKER_HINTS};
+use crate::input::{HINTS, PICKER_HINTS, QUEUE_HINTS};
 
 const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
@@ -52,6 +53,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.search_open {
         search::draw(frame, body, &mut app.search);
+    }
+    if app.queue_view.is_some() {
+        queue::draw(frame, body, app);
     }
     if app.show_help {
         help::draw(frame, frame.area());
@@ -129,6 +133,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             // Show as many whole hints as fit; they're ordered by importance.
             let hints = if app.picker.is_some() || app.search_open {
                 PICKER_HINTS
+            } else if app.queue_view.is_some() {
+                QUEUE_HINTS
             } else {
                 HINTS
             };
@@ -433,6 +439,34 @@ mod tests {
         app.update(Action::Down);
         app.update(Action::Play);
         insta::assert_snapshot!("search_results_list", render(&mut app, 110, 24).backend());
+    }
+
+    #[test]
+    fn queue_popup_and_next_label() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        app.update(Action::Play);
+        app.update(Action::Player {
+            event: None,
+            status: Status {
+                state: PlaybackState::Playing,
+                index: Some(1),
+                position: Duration::from_secs(72),
+                duration: Duration::from_secs(231),
+                volume: 0.8,
+            },
+        });
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        let terminal = render(&mut app, 120, 24);
+        let text = format!("{}", terminal.backend());
+        assert!(text.contains("next: Pete Cannon"), "{text}");
+        assert!(text.contains("(+1)"), "{text}");
+        assert!(text.contains("│+ Pete Cannon"), "queued marker: {text}");
+        app.update(Action::OpenQueue);
+        insta::assert_snapshot!(render(&mut app, 120, 24).backend());
     }
 
     #[test]

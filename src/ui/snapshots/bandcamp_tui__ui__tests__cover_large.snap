@@ -51,4 +51,4 @@ expression: terminal.backend()
 " Now playing ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── autoplay on "
 " Nothing playing. Select a release and press ⏎.                                                                                                                 "
 "                                                                                                                                                                "
-" ⏎ play  space pause  tab pane  q quit  / search  ? help  n/p track  ←→ seek  +/- volume  f genre  t time  L place  i info  a autoplay  s sort  r refresh       "
+" ⏎ play  space pause  tab pane  q quit  / search  ? help  n/p track  ←→ seek  +/- volume  f genre  t time  L place  i info  e queue  a autoplay  s sort         "
