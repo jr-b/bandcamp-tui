@@ -1,0 +1,18 @@
+---
+source: src/ui/mod.rs
+expression: "render(&mut app, 50, 14).backend()"
+---
+" bandcamp  Discover · electroni1,947,113 releases "
+"┌ Listening ─────────────────────────── v browse ┐"
+"│                                                │"
+"│             … Joyride (buffering)              │"
+"│                 Ocean Company                  │"
+"│         Ocean Company · track 2 of 10          │"
+"│                                                │"
+"│   1:12 ━━━━━━●────────────── 3:51   vol  80%   │"
+"│                                                │"
+"│                 next: Passage                  │"
+"│                                                │"
+"│                                                │"
+"└────────────────────────────────────────────────┘"
+" space pause  v browse  n/p track  ←→ seek        "

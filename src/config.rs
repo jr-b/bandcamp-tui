@@ -7,6 +7,8 @@
 //! album_art = "auto"
 //! # When an album ends, continue with the next Discover release. Toggle with `a`.
 //! autoplay = true
+//! # Switch to the listening view (`v`) whenever the queue starts a release.
+//! listen_on_queue = false
 //! ```
 
 use std::path::Path;
@@ -31,6 +33,8 @@ pub struct Config {
     pub album_art: AlbumArt,
     /// Continue with the next Discover release when an album ends.
     pub autoplay: bool,
+    /// Switch to the listening view whenever the queue starts a release.
+    pub listen_on_queue: bool,
 }
 
 impl Default for Config {
@@ -38,6 +42,7 @@ impl Default for Config {
         Self {
             album_art: AlbumArt::default(),
             autoplay: true,
+            listen_on_queue: false,
         }
     }
 }
@@ -116,6 +121,13 @@ mod tests {
         assert!(Config::load(&path).unwrap().autoplay);
         let path = write("autoplay-off", "autoplay = false\n");
         assert!(!Config::load(&path).unwrap().autoplay);
+    }
+
+    #[test]
+    fn listen_on_queue_defaults_off() {
+        assert!(!Config::default().listen_on_queue);
+        let path = write("listen", "listen_on_queue = true\n");
+        assert!(Config::load(&path).unwrap().listen_on_queue);
     }
 
     #[test]
