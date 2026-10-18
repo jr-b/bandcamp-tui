@@ -38,11 +38,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .areas(body);
         discover::draw(frame, list, app);
-        album::draw(frame, album, app);
+        album::draw(frame, album, app, false);
     } else {
         match app.focus {
             Focus::Discover => discover::draw(frame, body, app),
-            Focus::Album => album::draw(frame, body, app),
+            Focus::Album => album::draw(frame, body, app, true),
         }
     }
     now_playing::draw(frame, now_playing, app);
@@ -333,35 +333,81 @@ mod tests {
         insta::assert_snapshot!("genre_picker_search", render(&mut app, 100, 24).backend());
     }
 
+    /// Loads a cover for the selected release at whatever size the last draw asked for.
+    fn load_cover(app: &mut App, terminal_size: (u16, u16)) -> crate::art::ArtBox {
+        render(app, terminal_size.0, terminal_size.1);
+        let art_box = app.album_pane.art_box.expect("room for a cover");
+        let art_id = app.selected().unwrap().art_id.unwrap();
+        let art = crate::art::encode(
+            &ratatui_image::picker::Picker::halfblocks(),
+            &crate::art::tests::test_jpeg(),
+            art_box,
+        )
+        .unwrap();
+        app.update(Action::ArtEncoded {
+            id: art_id,
+            art_box,
+            result: Ok(art),
+        });
+        art_box
+    }
+
+    fn halfblock_cells(terminal: &Terminal<TestBackend>) -> usize {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|c| matches!(c.symbol(), "▀" | "▄"))
+            .count()
+    }
+
     #[test]
     fn album_with_cover_art() {
         // Halfblocks only so the snapshot can show the cover; the app itself never uses them.
         let mut app = app_with_page();
         app.art_enabled = true;
-        let id = app.selected().unwrap().id;
-        let art_id = app.selected().unwrap().art_id.unwrap();
         show_album(&mut app, fixture_album("album"));
         // Loading: placeholder of the same size.
         insta::assert_snapshot!("cover_loading", render(&mut app, 120, 24).backend());
-        let art = crate::art::encode(
-            &ratatui_image::picker::Picker::halfblocks(),
-            &crate::art::tests::test_jpeg(),
-        )
-        .unwrap();
-        app.update(Action::ArtLoaded {
-            id: art_id,
-            result: Ok(art),
-        });
+        load_cover(&mut app, (120, 24));
         let terminal = render(&mut app, 120, 24);
-        let buffer = terminal.backend().buffer();
-        let halfblocks = buffer
-            .content()
-            .iter()
-            .filter(|c| matches!(c.symbol(), "▀" | "▄"))
-            .count();
-        assert!(halfblocks > 50, "cover not drawn ({halfblocks} cells)");
-        assert_eq!(app.selected().unwrap().id, id);
+        assert!(halfblock_cells(&terminal) > 50, "cover not drawn");
         insta::assert_snapshot!("cover_loaded", terminal.backend());
+    }
+
+    #[test]
+    fn cover_grows_with_the_terminal() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        show_album(&mut app, fixture_album("album"));
+        let small = load_cover(&mut app, (120, 24));
+        let large = load_cover(&mut app, (160, 50));
+        assert!(large.rows > small.rows, "{small:?} → {large:?}");
+        let terminal = render(&mut app, 160, 50);
+        assert!(halfblock_cells(&terminal) > 3 * 50, "large cover not drawn");
+        insta::assert_snapshot!("cover_large", terminal.backend());
+    }
+
+    #[test]
+    fn narrow_layout_keeps_the_cover_compact() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        show_album(&mut app, fixture_album("album"));
+        app.update(Action::FocusAlbum);
+        // 80 columns: single pane. Tall enough that the wide layout would go bigger.
+        render(&mut app, 80, 60);
+        let art_box = app.album_pane.art_box.unwrap();
+        assert!(art_box.rows <= 8, "{art_box:?}");
+    }
+
+    #[test]
+    fn tiny_panes_drop_the_cover() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 120, 16);
+        assert_eq!(app.album_pane.art_box, None);
     }
 
     #[test]

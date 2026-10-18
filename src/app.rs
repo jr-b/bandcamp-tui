@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use ratatui::widgets::{ListState, TableState};
 
-use crate::art::Art;
+use crate::art::{Art, ArtBox};
+use crate::bandcamp::images::ImageSize;
 use crate::bandcamp::{
     Album, ArtId, Artist, BandId, Cursor, DiscoverItem, DiscoverPage, DiscoverQuery, Filters,
     ItemId, SearchResult, Slice, TralbumKind,
@@ -23,8 +24,10 @@ const LOAD_MORE_THRESHOLD: usize = 10;
 /// Stop paging after this many releases to keep memory bounded.
 pub const MAX_ITEMS: usize = 1000;
 const ALBUM_CACHE_SIZE: usize = 64;
-/// Encoded covers are ~10–50 KB each depending on the protocol.
+/// Encoded covers (one per size), ~10–200 KB each depending on protocol and size.
 const ART_CACHE_SIZE: usize = 16;
+/// Downloaded cover JPEGs (~10–80 KB each), kept so a resize can re-encode without refetching.
+const ART_SOURCE_CACHE_SIZE: usize = 32;
 const VOLUME_STEP: f32 = 0.05;
 const SEEK_STEP_MS: i64 = 10_000;
 /// Autoplay gives up after this many releases in a row that can't be played.
@@ -100,8 +103,16 @@ pub enum Action {
         /// Boxed: an `Album` is much larger than every other action.
         result: Result<Box<Album>, String>,
     },
-    ArtLoaded {
+    /// A cover's JPEG arrived (at `size`).
+    ArtFetched {
         id: ArtId,
+        size: ImageSize,
+        result: Result<bytes::Bytes, String>,
+    },
+    /// A cover was encoded for the terminal at `Art::art_box`.
+    ArtEncoded {
+        id: ArtId,
+        art_box: ArtBox,
         result: Result<Art, String>,
     },
     Player {
@@ -125,8 +136,17 @@ pub enum Effect {
         id: ItemId,
         kind: TralbumKind,
     },
-    /// Download and encode a cover (only when art is enabled).
-    FetchArt(ArtId),
+    /// Download a cover JPEG (only when art is enabled).
+    FetchArt {
+        id: ArtId,
+        size: ImageSize,
+    },
+    /// Encode a downloaded cover for the terminal at `art_box` (off the UI thread).
+    EncodeArt {
+        id: ArtId,
+        jpeg: bytes::Bytes,
+        art_box: ArtBox,
+    },
     /// Send [`Action::SearchDue`] after a short delay, replacing any pending one.
     DebounceSearch(u64),
     FetchSearch {
@@ -228,6 +248,8 @@ pub struct AlbumPane {
     pub info_scroll: u16,
     /// Rows visible in the tracklist, set while rendering.
     pub page_rows: usize,
+    /// Where the cover fits in the pane as last drawn (`None`: no room, text only).
+    pub art_box: Option<ArtBox>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,8 +292,14 @@ pub struct App {
     albums: Lru<ItemId, Arc<Album>>,
     /// Whether the terminal shows cover art (decided once at startup).
     pub art_enabled: bool,
-    arts: Lru<ArtId, Art>,
+    /// The terminal's cell size in pixels, for sizing covers (set with `art_enabled`).
+    pub art_font: ratatui_image::FontSize,
+    art_sources: Lru<ArtId, ArtSource>,
+    arts: Lru<(ArtId, ArtBox), Art>,
+    /// Downloads in flight.
     art_requests: HashSet<ArtId>,
+    /// Encodes in flight.
+    art_encodes: HashSet<(ArtId, ArtBox)>,
     art_failed: HashSet<ArtId>,
     /// Album requests in flight, so we never fetch the same release twice at once.
     album_requests: HashSet<ItemId>,
@@ -319,8 +347,11 @@ impl App {
             picker: None,
             albums: Lru::new(ALBUM_CACHE_SIZE),
             art_enabled: false,
+            art_font: ratatui_image::FontSize::new(10, 20),
+            art_sources: Lru::new(ART_SOURCE_CACHE_SIZE),
             arts: Lru::new(ART_CACHE_SIZE),
             art_requests: HashSet::new(),
+            art_encodes: HashSet::new(),
             art_failed: HashSet::new(),
             album_requests: HashSet::new(),
             album_errors: HashMap::new(),
@@ -483,13 +514,31 @@ impl App {
             | Action::Backspace
             | Action::ClearInput
             | Action::Resize => vec![],
+            other @ (Action::DiscoverLoaded { .. }
+            | Action::AlbumDue(_)
+            | Action::AlbumLoaded { .. }
+            | Action::ArtFetched { .. }
+            | Action::ArtEncoded { .. }
+            | Action::Player { .. }) => self.background_update(other),
+        }
+    }
+
+    /// Results arriving from the network, the image encoder and the player.
+    fn background_update(&mut self, action: Action) -> Vec<Effect> {
+        match action {
             Action::DiscoverLoaded { generation, result } => {
                 self.discover_loaded(generation, result)
             }
             Action::AlbumDue(id) => self.album_due(id),
             Action::AlbumLoaded { id, result } => self.album_loaded(id, result),
-            Action::ArtLoaded { id, result } => self.art_loaded(id, result),
+            Action::ArtFetched { id, size, result } => self.art_fetched(id, size, result),
+            Action::ArtEncoded {
+                id,
+                art_box,
+                result,
+            } => self.art_encoded(id, art_box, result),
             Action::Player { event, status } => self.player_update(event, status),
+            _ => vec![],
         }
     }
 
@@ -672,40 +721,130 @@ impl App {
         (needs_album || needs_art).then_some(Effect::DebounceAlbum(id))
     }
 
+    /// The image size needed for the cover box as last drawn.
+    fn wanted_art_size(&self) -> Option<ImageSize> {
+        let art_box = self.album_pane.art_box?;
+        Some(crate::art::source_size(art_box, self.art_font))
+    }
+
+    /// Whether cover `id` still has to be downloaded (or re-downloaded bigger).
     fn needs_art(&self, id: ArtId) -> bool {
-        self.art_enabled
-            && self.arts.peek(id).is_none()
-            && !self.art_requests.contains(&id)
+        let Some(wanted) = self.wanted_art_size().filter(|_| self.art_enabled) else {
+            return false;
+        };
+        !self.art_requests.contains(&id)
             && !self.art_failed.contains(&id)
+            && self.art_sources.peek(id).is_none_or(|s| s.size < wanted)
     }
 
     fn fetch_art(&mut self, id: Option<ArtId>) -> Option<Effect> {
         let id = id.filter(|&id| self.needs_art(id))?;
+        let size = self.wanted_art_size()?;
         self.art_requests.insert(id);
-        Some(Effect::FetchArt(id))
+        Some(Effect::FetchArt { id, size })
     }
 
-    /// Cover art for the album pane: `None` when there's none to show (disabled, no art, or
-    /// it failed), `Some(None)` while loading.
+    /// Encodes cover `id` for the current box if its JPEG is here and that size isn't.
+    fn encode_art(&mut self, id: ArtId) -> Option<Effect> {
+        let art_box = self.album_pane.art_box?;
+        if self.arts.peek((id, art_box)).is_some() || self.art_encodes.contains(&(id, art_box)) {
+            return None;
+        }
+        let source = self.art_sources.get(id)?;
+        self.art_encodes.insert((id, art_box));
+        Some(Effect::EncodeArt {
+            id,
+            jpeg: source.jpeg,
+            art_box,
+        })
+    }
+
+    /// Cover art for the album pane: `None` when there's none to show (disabled, no room, no
+    /// art, or it failed), `Some(None)` while loading. While a resize re-encodes the cover, the
+    /// largest earlier encoding that still fits is shown instead of a placeholder.
     #[must_use]
     pub fn art_for(&self, id: Option<ArtId>) -> Option<Option<&Art>> {
         let id = id.filter(|_| self.art_enabled)?;
+        let art_box = self.album_pane.art_box?;
         if self.art_failed.contains(&id) {
             return None;
         }
-        Some(self.arts.peek(id))
+        if let Some(art) = self.arts.peek((id, art_box)) {
+            return Some(Some(art));
+        }
+        let fallback = self
+            .arts
+            .iter()
+            .filter(|((art_id, b), _)| {
+                *art_id == id && b.rows <= art_box.rows && b.cols <= art_box.cols
+            })
+            .max_by_key(|((_, b), _)| b.rows)
+            .map(|(_, art)| art);
+        Some(fallback)
     }
 
-    fn art_loaded(&mut self, id: ArtId, result: Result<Art, String>) -> Vec<Effect> {
+    fn art_fetched(
+        &mut self,
+        id: ArtId,
+        size: ImageSize,
+        result: Result<bytes::Bytes, String>,
+    ) -> Vec<Effect> {
         self.art_requests.remove(&id);
         match result {
-            Ok(art) => self.arts.insert(id, art),
+            Ok(jpeg) => {
+                // A bigger source makes every earlier (smaller-source) encoding obsolete.
+                self.arts.retain(|(art_id, _)| *art_id != id);
+                self.art_sources.insert(id, ArtSource { jpeg, size });
+                self.encode_art(id).into_iter().collect()
+            }
             Err(e) => {
                 tracing::info!(%id, error = %e, "cover art unavailable");
+                self.art_failed.insert(id);
+                vec![]
+            }
+        }
+    }
+
+    fn art_encoded(
+        &mut self,
+        id: ArtId,
+        art_box: ArtBox,
+        result: Result<Art, String>,
+    ) -> Vec<Effect> {
+        self.art_encodes.remove(&(id, art_box));
+        match result {
+            Ok(art) => self.arts.insert((id, art_box), art),
+            Err(e) => {
+                tracing::info!(%id, error = %e, "cover art couldn't be encoded");
                 self.art_failed.insert(id);
             }
         }
         vec![]
+    }
+
+    /// Called after every draw, once the layout (and so the cover box) is known. Re-encodes or
+    /// re-downloads the current cover when a resize changed the size it needs. Never starts a
+    /// first download: those go through the selection debounce.
+    pub fn after_draw(&mut self) -> Vec<Effect> {
+        if !self.art_enabled {
+            return vec![];
+        }
+        let id = match self.album_view() {
+            AlbumView::Loaded(album) => album.art_id,
+            AlbumView::Loading(item) | AlbumView::Failed(item, _) => item.art_id,
+            AlbumView::None => None,
+        };
+        let Some(id) = id else {
+            return vec![];
+        };
+        if self.art_sources.peek(id).is_none() {
+            return vec![];
+        }
+        let mut effects: Vec<Effect> = self.fetch_art(Some(id)).into_iter().collect();
+        if effects.is_empty() {
+            effects.extend(self.encode_art(id));
+        }
+        effects
     }
 
     /// Resets the tracklist when the album pane starts showing a different release.
@@ -1274,7 +1413,8 @@ impl Action {
                 | Self::DiscoverLoaded { .. }
                 | Self::AlbumDue(_)
                 | Self::AlbumLoaded { .. }
-                | Self::ArtLoaded { .. }
+                | Self::ArtFetched { .. }
+                | Self::ArtEncoded { .. }
                 | Self::SearchDue(_)
                 | Self::SearchLoaded { .. }
                 | Self::ArtistLoaded { .. }
@@ -1303,6 +1443,13 @@ fn move_selection(table: &mut TableState, len: usize, delta: isize) -> bool {
 
 fn page(rows: usize) -> isize {
     isize::try_from(rows.saturating_sub(1).max(1)).unwrap_or(isize::MAX)
+}
+
+/// A downloaded cover, kept compressed.
+#[derive(Debug, Clone)]
+struct ArtSource {
+    jpeg: bytes::Bytes,
+    size: ImageSize,
 }
 
 /// Small least-recently-used cache: album details (a few KB each) and encoded cover art.
@@ -1348,6 +1495,15 @@ impl<K: Copy + Eq + std::hash::Hash, V: Clone> Lru<K, V> {
         {
             self.map.remove(&oldest);
         }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.map.iter()
+    }
+
+    fn retain(&mut self, keep: impl Fn(&K) -> bool) {
+        self.map.retain(|k, _| keep(k));
+        self.order.retain(|k| keep(k));
     }
 
     fn remove(&mut self, key: K) {
@@ -1765,6 +1921,55 @@ mod tests {
         );
     }
 
+    const SMALL_BOX: ArtBox = ArtBox { cols: 12, rows: 6 };
+    const BIG_BOX: ArtBox = ArtBox { cols: 24, rows: 12 };
+
+    /// An app with art on and the cover box as the UI would record it.
+    fn with_art(art_box: ArtBox) -> App {
+        let mut app = loaded();
+        app.art_enabled = true;
+        app.album_pane.art_box = Some(art_box);
+        app
+    }
+
+    fn encoded(art_box: ArtBox) -> Art {
+        crate::art::encode(
+            &ratatui_image::picker::Picker::halfblocks(),
+            &crate::art::tests::test_jpeg(),
+            art_box,
+        )
+        .unwrap()
+    }
+
+    /// Downloads and encodes the selected release's cover at `art_box`.
+    fn load_cover(app: &mut App, art_box: ArtBox) -> ArtId {
+        let item = app.selected().unwrap().clone();
+        let art_id = item.art_id.unwrap();
+        let effects = app.update(Action::AlbumDue(item.id));
+        let Some(&Effect::FetchArt { id, size }) = effects
+            .iter()
+            .find(|e| matches!(e, Effect::FetchArt { .. }))
+        else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(id, art_id);
+        let effects = app.update(Action::ArtFetched {
+            id,
+            size,
+            result: Ok(crate::art::tests::test_jpeg().into()),
+        });
+        assert!(
+            matches!(&effects[..], [Effect::EncodeArt { art_box: b, .. }] if *b == art_box),
+            "{effects:?}"
+        );
+        app.update(Action::ArtEncoded {
+            id,
+            art_box,
+            result: Ok(encoded(art_box)),
+        });
+        art_id
+    }
+
     #[test]
     fn art_is_fetched_with_details_only_when_enabled() {
         // Disabled (the default): no art effects at all.
@@ -1775,45 +1980,114 @@ mod tests {
             [Effect::FetchAlbum { .. }]
         ));
 
-        let mut app = loaded();
-        app.art_enabled = true;
-        let item = app.selected().unwrap().clone();
-        let art_id = item.art_id.unwrap();
+        let mut app = with_art(SMALL_BOX);
+        let art_id = app.selected().unwrap().art_id.unwrap();
         assert_eq!(app.art_for(Some(art_id)), Some(None), "loading");
-        let effects = app.update(Action::AlbumDue(item.id));
-        assert!(
-            matches!(&effects[..], [Effect::FetchAlbum { .. }, Effect::FetchArt(a)] if *a == art_id),
-            "{effects:?}"
-        );
-        let art = crate::art::encode(
-            &ratatui_image::picker::Picker::halfblocks(),
-            &crate::art::tests::test_jpeg(),
-        )
-        .unwrap();
-        app.update(Action::ArtLoaded {
-            id: art_id,
-            result: Ok(art.clone()),
-        });
-        assert_eq!(app.art_for(Some(art_id)), Some(Some(&art)));
+        load_cover(&mut app, SMALL_BOX);
+        assert!(matches!(app.art_for(Some(art_id)), Some(Some(a)) if a.art_box == SMALL_BOX));
 
         // Leaving and coming back: details and art are cached, nothing to fetch.
+        let item = app.selected().unwrap().id;
         app.update(Action::AlbumLoaded {
-            id: item.id,
+            id: item,
             result: Ok(album_fixture("album")),
         });
         app.update(Action::Down);
         assert!(matches!(app.update(Action::Up)[..], []));
+        assert_eq!(app.after_draw(), []);
+    }
+
+    #[test]
+    fn the_download_size_follows_the_box() {
+        let mut app = with_art(SMALL_BOX);
+        let item = app.selected().unwrap().id;
+        let effects = app.update(Action::AlbumDue(item));
+        assert!(effects.contains(&Effect::FetchArt {
+            id: app.selected().unwrap().art_id.unwrap(),
+            size: ImageSize::Px150,
+        }));
+
+        let mut app = with_art(BIG_BOX);
+        let item = app.selected().unwrap().id;
+        let effects = app.update(Action::AlbumDue(item));
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::FetchArt {
+                    size: ImageSize::Px350,
+                    ..
+                }
+            )),
+            "{effects:?}"
+        );
+    }
+
+    #[test]
+    fn a_resize_re_encodes_and_shows_the_old_size_meanwhile() {
+        let mut app = with_art(BIG_BOX);
+        let art_id = load_cover(&mut app, BIG_BOX);
+
+        // Shrinking: the source is big enough, so just re-encode.
+        app.album_pane.art_box = Some(SMALL_BOX);
+        let effects = app.after_draw();
+        assert!(
+            matches!(&effects[..], [Effect::EncodeArt { art_box, .. }] if *art_box == SMALL_BOX),
+            "{effects:?}"
+        );
+        // Nothing smaller is encoded yet: the big one doesn't fit, so a placeholder.
+        assert_eq!(app.art_for(Some(art_id)), Some(None));
+        assert_eq!(app.after_draw(), [], "already encoding");
+        app.update(Action::ArtEncoded {
+            id: art_id,
+            art_box: SMALL_BOX,
+            result: Ok(encoded(SMALL_BOX)),
+        });
+
+        // Growing back: the big encoding is still cached, so no work at all.
+        app.album_pane.art_box = Some(BIG_BOX);
+        assert_eq!(app.after_draw(), []);
+        assert!(matches!(app.art_for(Some(art_id)), Some(Some(a)) if a.art_box == BIG_BOX));
+    }
+
+    #[test]
+    fn growing_past_the_source_downloads_a_bigger_one() {
+        let mut app = with_art(SMALL_BOX);
+        let art_id = load_cover(&mut app, SMALL_BOX);
+        app.album_pane.art_box = Some(BIG_BOX);
+        let effects = app.after_draw();
+        assert_eq!(
+            effects,
+            [Effect::FetchArt {
+                id: art_id,
+                size: ImageSize::Px350
+            }]
+        );
+        // While it downloads, the small cover stands in.
+        assert!(matches!(app.art_for(Some(art_id)), Some(Some(a)) if a.art_box == SMALL_BOX));
+    }
+
+    #[test]
+    fn no_room_means_no_cover_and_no_download() {
+        let mut app = loaded();
+        app.art_enabled = true;
+        app.album_pane.art_box = None;
+        let item = app.selected().unwrap().clone();
+        assert!(matches!(
+            app.update(Action::AlbumDue(item.id))[..],
+            [Effect::FetchAlbum { .. }]
+        ));
+        assert_eq!(app.art_for(item.art_id), None);
     }
 
     #[test]
     fn failed_art_falls_back_to_text_and_isnt_retried() {
-        let mut app = loaded();
-        app.art_enabled = true;
+        let mut app = with_art(SMALL_BOX);
         let item = app.selected().unwrap().clone();
         let art_id = item.art_id.unwrap();
         app.update(Action::AlbumDue(item.id));
-        app.update(Action::ArtLoaded {
+        app.update(Action::ArtFetched {
             id: art_id,
+            size: ImageSize::Px150,
             result: Err("404".into()),
         });
         assert_eq!(app.art_for(Some(art_id)), None);

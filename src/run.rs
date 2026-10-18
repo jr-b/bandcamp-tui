@@ -69,6 +69,9 @@ pub async fn run(
     let (mut app, effects) = App::new(query, player.is_some());
     app.player.volume = initial_volume;
     app.art_enabled = art.is_some();
+    if let Some(picker) = &art {
+        app.art_font = picker.font_size();
+    }
     app.autoplay = autoplay;
     let executor = Executor {
         client,
@@ -90,6 +93,9 @@ pub async fn run(
         if dirty {
             terminal.draw(|frame| crate::ui::draw(frame, &mut app))?;
             dirty = false;
+            // The layout is known now: a resize may need the cover at another size.
+            let effects = app.after_draw();
+            executor.run(effects, &mut timers);
         }
         let action = tokio::select! {
             event = input.next() => match event {
@@ -229,15 +235,29 @@ impl Executor {
                         apply(player, command);
                     }
                 }
-                Effect::FetchArt(id) => {
-                    let Some(picker) = self.art.clone() else {
-                        continue;
-                    };
+                Effect::FetchArt { id, size } => {
+                    tracing::debug!(%id, ?size, "fetching cover");
                     let http = self.client.http().clone();
                     let tx = self.results.clone();
                     tokio::spawn(async move {
-                        let result = fetch_art(&http, picker, id).await;
-                        let _ = tx.send(Action::ArtLoaded { id, result });
+                        let result = fetch_art(&http, id, size).await;
+                        let _ = tx.send(Action::ArtFetched { id, size, result });
+                    });
+                }
+                Effect::EncodeArt { id, jpeg, art_box } => {
+                    tracing::debug!(%id, ?art_box, "encoding cover");
+                    let Some(picker) = self.art.clone() else {
+                        continue;
+                    };
+                    let tx = self.results.clone();
+                    // CPU-bound (decode, scale, encode): keep it off the async workers.
+                    tokio::task::spawn_blocking(move || {
+                        let result = crate::art::encode(&picker, &jpeg, art_box);
+                        let _ = tx.send(Action::ArtEncoded {
+                            id,
+                            art_box,
+                            result,
+                        });
                     });
                 }
                 Effect::OpenUrl(url) => open_url(&url),
@@ -255,24 +275,20 @@ impl Executor {
     }
 }
 
-/// Downloads a cover and encodes it for the terminal off the async threads.
+/// Downloads a cover's JPEG.
 async fn fetch_art(
     http: &reqwest::Client,
-    picker: std::sync::Arc<ratatui_image::picker::Picker>,
     id: crate::bandcamp::ArtId,
-) -> Result<crate::art::Art, String> {
-    use crate::bandcamp::images::{ImageSize, art_url};
+    size: crate::bandcamp::images::ImageSize,
+) -> Result<bytes::Bytes, String> {
     let response = http
-        .get(art_url(id, ImageSize::Px150))
+        .get(crate::bandcamp::images::art_url(id, size))
         .timeout(Duration::from_secs(15))
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
         .map_err(|e| error_chain(&e))?;
-    let bytes = response.bytes().await.map_err(|e| error_chain(&e))?;
-    tokio::task::spawn_blocking(move || crate::art::encode(&picker, &bytes))
-        .await
-        .map_err(|e| e.to_string())?
+    response.bytes().await.map_err(|e| error_chain(&e))
 }
 
 /// Opens `url` in the default browser without blocking or touching the terminal.

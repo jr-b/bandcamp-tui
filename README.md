@@ -14,7 +14,8 @@ streaming full albums. No account or login needed.
 - Album and artist info, tracklists, play from any track
 - Autoplay: when an album ends, the next Discover release starts (toggle with `a`)
 - Keyboard-driven, with vim and arrow keys; remembers your filters and volume
-- Cover art on terminals with kitty, iTerm2 or sixel graphics (text-only everywhere else)
+- Cover art on terminals with kitty, iTerm2 or sixel graphics, sized to the window (text-only
+  everywhere else)
 - Recovers by itself when Bandcamp's stream links expire (they're signed for about a day)
 
 ## Building
