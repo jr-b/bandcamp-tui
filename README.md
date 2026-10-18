@@ -2,6 +2,8 @@
 
 A terminal player for [Bandcamp Discover](https://bandcamp.com/discover/) that streams full albums. No account needed.
 
+![Browsing Discover, switching genre and playing an album](assets/demo.gif)
+
 ## Features
 
 - Browse Discover by genre/tag, sort (best-selling, new, surprise me), release time and location
