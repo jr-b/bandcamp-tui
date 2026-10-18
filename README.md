@@ -1,95 +1,87 @@
-# bandcamp-tui
+# bandcamp-discover-tui
 
-A terminal player for browsing [Bandcamp Discover](https://bandcamp.com/discover/) and
-streaming full albums. No account or login needed.
-
-> **Status:** usable; polishing. See [PLAN.md](PLAN.md) for the design and roadmap.
+A terminal player for [Bandcamp Discover](https://bandcamp.com/discover/) that streams full albums. No account needed.
 
 ## Features
 
-- Browse Discover by genre/tag, best-selling / new / surprise-me, time period and location
-- Stream full albums (128 kbps MP3, the same quality as the website) with gapless track changes,
-  in about 30 MB of memory and well under 1 % CPU
-- Search artists, albums and tracks (`/`), and browse an artist's whole discography
-- Album and artist info, tracklists, play from any track
-- A play queue across albums: add releases or single tracks while something plays
-- Autoplay: when the queue runs out, the next Discover release starts (toggle with `a`)
-- Keyboard-driven, with vim and arrow keys; remembers your filters and volume
-- Cover art on terminals with kitty, iTerm2 or sixel graphics, sized to the window (text-only
-  everywhere else)
-- Recovers by itself when Bandcamp's stream links expire (they're signed for about a day)
+- Browse Discover by genre/tag, sort (best-selling, new, surprise me), release time and location
+- Stream full albums (128 kbps MP3) in about 30 MB of memory
+- Search artists, albums and tracks; browse an artist's discography
+- Album info, credits, artist bio and tracklist; play from any track
+- Queue releases or single tracks across albums
+- Autoplay: when the queue ends, the next Discover release starts
+- Vim and arrow keys; filters, volume and queue persist between runs
+- Cover art on terminals with kitty, iTerm2 or sixel graphics
+- Expired stream links (valid ~24 h) are refreshed automatically
 
-## Building
+## Why
 
-Requires Rust 1.91 or newer.
+Bandcamp's Discover page plays one track per album and doesn't continue to the next release. I wanted to listen through Discover continuously, from my terminal.
+
+## Install
+
+Requires Rust 1.91+.
 
 ```sh
-cargo build --release
+cargo install --path .
 ```
 
-On Linux, audio output needs the ALSA development headers:
+On Linux, install the ALSA headers first:
 
 ```sh
-# Debian/Ubuntu
-sudo apt-get install libasound2-dev
-# Fedora
-sudo dnf install alsa-lib-devel
+sudo apt-get install libasound2-dev   # Debian/Ubuntu
+sudo dnf install alsa-lib-devel       # Fedora
 ```
 
 ## Usage
 
 ```sh
-bandcamp-tui                       # last-used filters
-bandcamp-tui -t electronic -t techno -s new
-bandcamp-tui --fresh               # ignore remembered filters and volume
+bandcamp-tui                                 # last-used filters
+bandcamp-tui -t electronic -t techno -s new  # tags; sort: top, new, random
+bandcamp-tui --fresh                         # ignore remembered state
+bandcamp-tui --no-art                        # no cover art
 ```
 
 | key | action |
 |-----|--------|
-| `↑↓` / `j k`, `g G`, `PgUp PgDn` | move |
-| `⏎` | play album (list) / play from track (tracklist) |
+| `↑↓` `j k`, `g G`, `PgUp PgDn` `^u ^d` | move |
+| `tab`, `h` / `l` | switch pane |
+| `⏎` | play album / play from track |
 | `space` | pause |
 | `n` / `p` | next / previous track |
-| `←` / `→` | seek 10 s |
+| `←→` / `, .` | seek 10 s |
 | `+` / `-` | volume |
-| `e` / `E` | add the release (or, in the tracklist, the track) to the queue / play it next |
-| `u` | the queue: `⏎` play now, `d` remove, `K`/`J` move, `c` clear |
-| `a` | autoplay on/off (continue with the next release when the queue runs out) |
-| `v` | listening view: only what's playing, with a large cover; `i` shows the album's about / credits / artist (`v` or `esc` to go back) |
-| `tab`, `h` / `l` | switch pane |
+| `e` / `E` | queue release (or track, in the tracklist) / play next |
+| `u` | queue: `⏎` play, `d` remove, `K J` move, `c` clear |
+| `a` | toggle autoplay |
+| `v` | listening view: large cover, playback only |
 | `i` | album about / credits / artist bio |
-| `o` | open the release on bandcamp.com (to buy it) |
-| `?` | all keys |
-| `/` | search artists, albums and tracks (`esc` returns to Discover) |
-| `f` / `t` / `L` | pick genre or tag / time range / location |
-| `s` | cycle best-selling / new arrivals / surprise me |
+| `o` | open on bandcamp.com |
+| `/` | search (`esc` back to Discover) |
+| `f` / `t` / `L` | genre or tag / release time / location |
+| `s` | cycle sort |
 | `r` | refresh |
-| `q`, `ctrl-c` | quit |
+| `?` | help |
+| `q`, `^c` | quit |
 
-Filters, volume, the queue and whether the listening view was open are remembered in `state.toml`, next to the log file
-(`~/Library/Application Support/bandcamp-tui/` on macOS, `~/.local/share/bandcamp-tui/` on Linux).
+Filters, volume, queue and view are saved to `state.toml`, alongside the log file `bandcamp-tui.log` (override with `--log-file`):
+
+- macOS: `~/Library/Application Support/bandcamp-tui/`
+- Linux: `~/.local/share/bandcamp-tui/`
 
 ## Configuration
 
-Optional. `config.toml` lives in `~/Library/Application Support/bandcamp-tui/` on macOS and
-`~/.config/bandcamp-tui/` on Linux (or pass `--config PATH`). Mistakes are reported at startup.
+Optional `config.toml` in `~/Library/Application Support/bandcamp-tui/` (macOS) or `~/.config/bandcamp-tui/` (Linux), or pass `--config PATH`. Invalid entries are reported at startup.
 
 ```toml
-# Cover art: "auto" (default), "on" or "off". Same as --no-art when "off".
-album_art = "auto"
-# When an album ends, continue with the next Discover release (skipping pre-orders and
-# anything unplayable). Default true; `a` toggles it for the current session.
-autoplay = true
-# Switch to the listening view (`v`) whenever the queue starts a release. Default false.
-listen_on_queue = false
+album_art = "auto"        # "auto", "on" or "off"
+autoplay = true           # start the next Discover release when the queue ends
+listen_on_queue = false   # open the listening view when the queue starts a release
 ```
 
-### Album art and tmux
+### Cover art and tmux
 
-With `auto`, cover art appears when the terminal answers that it supports kitty, iTerm2 or
-sixel graphics (kitty, Ghostty, WezTerm, iTerm2, foot, recent Konsole and Windows Terminal).
-Other terminals get the text-only layout. Inside tmux it's off by default; to enable it, set
-`album_art = "on"` and add this to `~/.tmux.conf`:
+`auto` shows art if the terminal reports kitty, iTerm2 or sixel support (e.g. kitty, Ghostty, WezTerm, iTerm2, foot), and is disabled inside tmux. To enable it in tmux, set `album_art = "on"` and add to `~/.tmux.conf`:
 
 ```
 set -g allow-passthrough on
@@ -100,32 +92,20 @@ set -g allow-passthrough on
 [`just`](https://github.com/casey/just) recipes mirror CI:
 
 ```sh
-just ci      # fmt check, clippy, tests, cargo-deny
-just run     # run the app
+just ci    # fmt check, clippy, tests, cargo-deny
+just run   # run the app
 ```
 
-`cargo deny` needs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny)
-(`cargo install cargo-deny` or `brew install cargo-deny`).
+`just ci` needs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
 
 ## Disclaimer
 
-This is an unofficial client. It isn't affiliated with or endorsed by Bandcamp, and it uses
-undocumented endpoints that may change at any time. It streams music the same way the
-Bandcamp website does and never saves audio to disk. If you like what you hear, buy it on
-Bandcamp: press `o` to open the album page.
+Unofficial client, not affiliated with or endorsed by Bandcamp. It uses undocumented endpoints that may change at any time, and streams the same way the website does. If you like what you hear, buy it: press `o` to open the album page.
 
 ## AI assistance
 
-This project was developed with substantial help from
-[Claude Code](https://claude.com/claude-code). I directed the design, reviewed
-and tested the changes, and I'm responsible for the code. Contributors are asked to disclose AI use. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Developed with substantial help from [Claude Code](https://claude.com/claude-code). I directed the design, reviewed and tested the changes, and am responsible for the code. Contributors should disclose AI use; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Licensed under [Creative Commons Attribution-NonCommercial 4.0 International](LICENSE)
-(CC BY-NC 4.0). You may use, share and adapt it with credit, but not for commercial
-purposes.
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for
-inclusion in this work shall be licensed as above, without any additional terms or
-conditions.
+[CC BY-NC 4.0](LICENSE): use, share and adapt with credit, not for commercial purposes. Contributions are licensed under the same terms unless stated otherwise.

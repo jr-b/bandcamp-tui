@@ -2,7 +2,6 @@
 name = "bandcamp-tui"
 version = "0.1.0"
 edition = "2024"
-# stream-download (milestone 3) requires 1.91.
 rust-version = "1.91"
 description = "A terminal player for browsing Bandcamp Discover and streaming full albums"
 license = "CC-BY-NC-4.0"
