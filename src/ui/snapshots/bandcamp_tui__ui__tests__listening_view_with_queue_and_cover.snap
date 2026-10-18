@@ -3,7 +3,7 @@ source: src/ui/mod.rs
 expression: terminal.backend()
 ---
 " bandcamp  Discover · electronic · best-selling                                  1,947,113 releases "
-"┌ Listening ───────────────────────────────────────────────────────────────────────────── v browse ┐"
+"┌ Listening ──────────────────────────────────────────────────────────────────── i about  v browse ┐"
 "│                     ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     │"
 "│                     ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     │"
 "│                     ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     │"
@@ -41,4 +41,4 @@ expression: terminal.backend()
 "│                                                                                                  │"
 "│           next: Pete Cannon - From The Manor House (N4LP001) — N4 Records (+1 queued)            │"
 "└──────────────────────────────────────────────────────────────────────────────────────────────────┘"
-" space pause  v browse  n/p track  ←→ seek  +/- volume  u queue  a autoplay  o open  ? help  q quit "
+" space pause  v browse  i info  n/p track  ←→ seek  +/- volume  u queue  a autoplay  o open  ? help "

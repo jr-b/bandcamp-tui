@@ -300,6 +300,20 @@ pub struct AlbumPane {
     pub art_box: Option<ArtBox>,
 }
 
+/// State of the listening view.
+#[derive(Debug, Default)]
+pub struct ListeningPane {
+    /// Where the cover fits as last drawn (`None`: no room, art off, or the info text shows).
+    pub art_box: Option<ArtBox>,
+    /// Show the playing album's about/credits/bio instead of the cover (`i`).
+    pub show_info: bool,
+    pub info_scroll: u16,
+    /// Which album `info_scroll` belongs to; rendering resets it for another album.
+    pub info_for: Option<ItemId>,
+    /// Rows of info text visible, set while rendering; used for page up/down.
+    pub page_rows: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageKind {
     Info,
@@ -338,8 +352,7 @@ pub struct App {
     /// Switch to the listening view whenever the queue starts a release (`config.toml`).
     pub listen_on_queue: bool,
     pub album_pane: AlbumPane,
-    /// Where the listening view's cover fits, set while rendering (`None`: text only).
-    pub listening_art_box: Option<ArtBox>,
+    pub listening: ListeningPane,
     /// Open filter popup, if any. While open it gets all keys.
     pub picker: Option<Picker>,
     albums: Lru<ItemId, Arc<Album>>,
@@ -407,7 +420,7 @@ impl App {
             screen: Screen::Browse,
             listen_on_queue: false,
             album_pane: AlbumPane::default(),
-            listening_art_box: None,
+            listening: ListeningPane::default(),
             picker: None,
             albums: Lru::new(ALBUM_CACHE_SIZE),
             art_enabled: false,
@@ -762,12 +775,20 @@ impl App {
 
     fn focused_page_rows(&self) -> usize {
         match self.focus {
+            _ if self.screen == Screen::Listening => self.listening.page_rows,
             Focus::Discover => self.page_rows,
             Focus::Album => self.album_pane.page_rows,
         }
     }
 
     fn move_by(&mut self, delta: isize) -> Vec<Effect> {
+        if self.screen == Screen::Listening {
+            // Only the info text moves here; rendering clamps it to the text height.
+            if self.listening.show_info {
+                self.listening.info_scroll = scrolled(self.listening.info_scroll, delta);
+            }
+            return vec![];
+        }
         match self.focus {
             Focus::Discover => {
                 let before = self.table.selected();
@@ -783,9 +804,7 @@ impl App {
             }
             Focus::Album if self.album_pane.show_info => {
                 // Scroll the info text; rendering clamps it to the text height.
-                let scroll = i64::from(self.album_pane.info_scroll)
-                    + i64::try_from(delta.clamp(-1000, 1000)).unwrap_or(0);
-                self.album_pane.info_scroll = u16::try_from(scroll.max(0)).unwrap_or(u16::MAX);
+                self.album_pane.info_scroll = scrolled(self.album_pane.info_scroll, delta);
                 vec![]
             }
             Focus::Album => {
@@ -817,7 +836,7 @@ impl App {
     fn art_box(&self) -> Option<ArtBox> {
         match self.screen {
             Screen::Browse => self.album_pane.art_box,
-            Screen::Listening => self.listening_art_box,
+            Screen::Listening => self.listening.art_box,
         }
     }
 
@@ -1193,6 +1212,10 @@ impl App {
             }
             Action::FocusDiscover => self.focus = Focus::Discover,
             Action::FocusAlbum => self.focus = Focus::Album,
+            Action::ToggleInfo if self.screen == Screen::Listening => {
+                self.listening.show_info = !self.listening.show_info;
+                self.listening.info_scroll = 0;
+            }
             Action::ToggleInfo => {
                 self.album_pane.show_info = !self.album_pane.show_info;
                 self.album_pane.info_scroll = 0;
@@ -1851,6 +1874,12 @@ fn move_selection(table: &mut TableState, len: usize, delta: isize) -> bool {
     let current = table.selected().unwrap_or(0);
     table.select(Some(current.saturating_add_signed(delta).min(len - 1)));
     true
+}
+
+/// A text scroll offset moved by `delta` lines, never below the top.
+fn scrolled(scroll: u16, delta: isize) -> u16 {
+    let scroll = i64::from(scroll) + i64::try_from(delta.clamp(-1000, 1000)).unwrap_or(0);
+    u16::try_from(scroll.max(0)).unwrap_or(u16::MAX)
 }
 
 fn page(rows: usize) -> isize {
@@ -3245,7 +3274,7 @@ mod tests {
         app.art_enabled = true;
         app.album_pane.art_box = Some(SMALL_BOX);
         app.update(Action::ToggleListening);
-        app.listening_art_box = Some(BIG_BOX);
+        app.listening.art_box = Some(BIG_BOX);
 
         // No debounce: the first draw fetches it, at the listening view's size.
         let effects = app.after_draw();
@@ -3317,5 +3346,33 @@ mod tests {
         assert!(
             matches!(&app.update(Action::OpenInBrowser)[..], [Effect::OpenUrl(u)] if *u == playing_url)
         );
+    }
+
+    #[test]
+    fn info_in_the_listening_view_is_its_own_toggle_and_scrolls() {
+        let mut app = playing_first();
+        app.update(Action::ToggleListening);
+        app.update(Action::ToggleInfo);
+        assert!(app.listening.show_info);
+        assert!(!app.album_pane.show_info, "the album pane keeps its own");
+        app.update(Action::Down);
+        app.update(Action::Down);
+        assert_eq!(app.listening.info_scroll, 2);
+        app.update(Action::Up);
+        app.update(Action::Up);
+        app.update(Action::Up);
+        assert_eq!(app.listening.info_scroll, 0, "never above the top");
+        let before = app.selected().map(|i| i.id);
+        app.update(Action::Bottom);
+        assert_eq!(
+            app.selected().map(|i| i.id),
+            before,
+            "the list doesn't move"
+        );
+        // Back to browsing: `i` is the album pane's again.
+        app.update(Action::ToggleListening);
+        app.update(Action::ToggleInfo);
+        assert!(app.album_pane.show_info);
+        assert!(app.listening.show_info, "remembered for next time");
     }
 }

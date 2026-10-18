@@ -1,7 +1,8 @@
-//! The listening view (`v`): only what's playing, with the cover as large as it fits.
+//! The listening view (`v`): only what's playing, with the cover as large as it fits, or
+//! (`i`) the playing album's about, credits and artist bio.
 
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 
@@ -17,17 +18,25 @@ use crate::player::PlaybackState;
 const MAX_PROGRESS_COLS: u16 = 72;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
-    let block = pane("Listening", true).title(Line::from(" v browse ").right_aligned().dim());
+    let hint = if app.listening.show_info {
+        " i cover  v browse "
+    } else {
+        " i about  v browse "
+    };
+    let block = pane("Listening", true).title(Line::from(hint).right_aligned().dim());
     let inner = block.inner(area);
     frame.render_widget(block, area);
     // Recorded for `App::after_draw`, which fetches or re-encodes the cover at this size.
-    app.listening_art_box = if app.art_enabled {
+    app.listening.art_box = if app.art_enabled && !app.listening.show_info {
         crate::art::listening_layout(inner.width, inner.height, app.art_font)
     } else {
         None
     };
 
-    let Some((album, index)) = app.current_track() else {
+    let (Some(index), Some(album)) = (
+        app.current_track().map(|(_, index)| index),
+        app.now_playing.clone(),
+    ) else {
         let hint = if app.player_available {
             "Nothing playing. Press v to browse, pick a release and press ⏎."
         } else {
@@ -43,37 +52,73 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     let track = &album.tracks[index];
     let width = usize::from(inner.width.saturating_sub(2));
-    let mut lines = track_lines(album, index, app.player.state, width);
+    let mut lines = track_lines(&album, index, app.player.state, width);
     lines.push(Line::default());
     let progress_width = inner.width.saturating_sub(4).min(MAX_PROGRESS_COLS);
-    let progress = progress_line(&app.player, track.duration, usize::from(progress_width));
-    let progress_row = lines.len();
-    lines.push(progress);
+    lines.push(progress_line(
+        &app.player,
+        track.duration,
+        usize::from(progress_width),
+    ));
+    let progress_row = lines.len() - 1;
+
+    if app.listening.show_info {
+        // The track and progress on top, the album's about/credits/bio scrolling below.
+        let [head, _, info] = Layout::vertical([
+            Constraint::Length(u16::try_from(lines.len()).unwrap_or(u16::MAX)),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
+        .areas(inner);
+        draw_centered(frame, head, lines, progress_row, progress_width);
+        let info = info.inner(Margin::new(2, 0));
+        if app.listening.info_for != Some(album.id) {
+            app.listening.info_for = Some(album.id);
+            app.listening.info_scroll = 0;
+        }
+        app.listening.page_rows = usize::from(info.height);
+        super::album::draw_info(frame, info, &album, &mut app.listening.info_scroll);
+        return;
+    }
+
     if let Some(next) = app.plays_next() {
         lines.push(Line::default());
         lines.push(up_next_line(next, width));
     }
-
     let art = app
-        .listening_art_box
+        .listening
+        .art_box
         .and_then(|art_box| Some((art_box, app.art_for(album.art_id)?)));
     let text_rows = u16::try_from(lines.len()).unwrap_or(u16::MAX);
     let cover_rows = art.map_or(0, |(b, _)| b.rows + 1);
     let top = inner.y + inner.height.saturating_sub(cover_rows + text_rows) / 2;
-
     if let Some((art_box, art)) = art {
         draw_cover(frame, inner, top, art_box, art);
     }
+    let text = Rect {
+        y: top + cover_rows,
+        height: (inner.y + inner.height).saturating_sub(top + cover_rows),
+        ..inner
+    };
+    draw_centered(frame, text, lines, progress_row, progress_width);
+}
 
-    let bottom = inner.y + inner.height;
+/// One centred line per row of `area`, from the top; the progress line gets its own width.
+fn draw_centered(
+    frame: &mut Frame,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+    progress_row: usize,
+    progress_width: u16,
+) {
     for (i, line) in lines.into_iter().enumerate() {
-        let y = top + cover_rows + u16::try_from(i).unwrap_or(u16::MAX);
-        if y >= bottom {
+        let Some(y) = u16::try_from(i).ok().filter(|&i| i < area.height) else {
             break;
-        }
+        };
+        let y = area.y + y;
         let row = if i == progress_row {
             Rect {
-                x: inner.x + inner.width.saturating_sub(progress_width) / 2,
+                x: area.x + area.width.saturating_sub(progress_width) / 2,
                 y,
                 width: progress_width,
                 height: 1,
@@ -82,7 +127,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
             Rect {
                 y,
                 height: 1,
-                ..inner
+                ..area
             }
         };
         frame.render_widget(line.centered(), row);
