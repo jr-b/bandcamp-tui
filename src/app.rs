@@ -406,6 +406,21 @@ impl App {
         )
     }
 
+    /// Track count and length for a list row. Discover leaves these out for some releases
+    /// (and search and artist pages never have them), so fall back to the album details once
+    /// they're cached.
+    #[must_use]
+    pub fn release_size(&self, item: &DiscoverItem) -> (Option<u32>, Option<std::time::Duration>) {
+        let album = self.albums.peek(item.id);
+        let tracks = item
+            .track_count
+            .or_else(|| album.and_then(|a| u32::try_from(a.tracks.len()).ok()));
+        let duration = item
+            .duration
+            .or_else(|| album.map(|a| a.duration()).filter(|d| !d.is_zero()));
+        (tracks, duration)
+    }
+
     /// The queue index currently playing, with its album.
     #[must_use]
     pub fn current_track(&self) -> Option<(&Album, usize)> {
@@ -2484,6 +2499,32 @@ mod tests {
         });
         assert!(
             matches!(&app.update(Action::OpenInBrowser)[..], [Effect::OpenUrl(u)] if *u == album_url)
+        );
+    }
+
+    #[test]
+    fn list_rows_fall_back_to_album_details_for_size() {
+        let mut app = loaded();
+        // Discover sometimes sends no track count or duration (e.g. "Declan James - Cycle 2").
+        app.discover.items[0].track_count = None;
+        app.discover.items[0].duration = None;
+        let item = app.discover.items[0].clone();
+        assert_eq!(app.release_size(&item), (None, None));
+
+        app.update(Action::AlbumDue(item.id));
+        app.update(Action::AlbumLoaded {
+            id: item.id,
+            result: Ok(album_fixture("album")),
+        });
+        let (tracks, duration) = app.release_size(&item);
+        assert_eq!(tracks, Some(10));
+        assert_eq!(duration.map(|d| d.as_secs()), Some(2279));
+
+        // Discover's own numbers win when present.
+        let other = app.discover.items[1].clone();
+        assert_eq!(
+            app.release_size(&other),
+            (other.track_count, other.duration)
         );
     }
 

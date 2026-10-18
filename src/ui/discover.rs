@@ -77,10 +77,13 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         } else {
             Line::from(format::truncate(&item.title, title_width))
         };
-        let tracks = item.track_count.map_or(String::new(), |n| n.to_string());
-        let length = item
-            .duration
-            .map_or(String::new(), |d| format!("{}m", (d.as_secs() + 30) / 60));
+        // Unknown until the details load: a dim dash rather than an empty cell.
+        let (tracks, duration) = app.release_size(item);
+        let unknown = || Span::styled("–", Style::new().dim());
+        let tracks = tracks.map_or_else(unknown, |n| Span::raw(n.to_string()));
+        let length = duration.map_or_else(unknown, |d| {
+            Span::raw(format!("{}m", (d.as_secs() + 30) / 60))
+        });
         Row::new([
             Cell::from(Span::styled(marker, Style::new().fg(ACCENT))),
             Cell::from(title),
