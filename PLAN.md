@@ -321,6 +321,14 @@ Everywhere else, the album pane is text only. **No halfblock or ASCII-art fallba
   Square in pixels using the terminal's measured cell size. The narrow single-pane layout caps
   it at 8 rows. Below 6 rows the pane is text-only. Beside a tall cover the text lists one fact
   per line plus tags and the start of the description.
+* **Detection pitfall (fixed):** ratatui-image 11 reads the capability reply on a helper
+  thread. If the terminal never answers, the thread stays blocked reading stdin and swallows
+  every key typed afterwards. That's what happens in tmux with `allow-passthrough` off: the
+  query is wrapped in passthrough, so tmux drops it. Detection therefore checks
+  `tmux show-options -Apv allow-passthrough` first (off → text-only, with a footer note),
+  and outside tmux it first checks that the terminal answers queries, using crossterm's own
+  reader. ratatui-image 12 uses `poll()` on the calling thread instead; drop the workaround
+  when moving to 12.0 stable.
 * **Fetch and cache:** the smallest Bandcamp size that covers the box (150/350/700 px) is
   downloaded and kept compressed (LRU of 32 JPEGs, ~10–80 KB each). Encodings are cached per
   size (LRU of 16). After every draw, `App::after_draw` re-encodes the current cover if the box

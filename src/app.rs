@@ -55,6 +55,8 @@ pub enum Action {
     ToggleAutoplay,
     /// Open the search box (`/`).
     OpenSearch,
+    /// Show an informational message in the footer.
+    Notice(String),
     /// Leave search results or an artist's releases and return to Discover.
     BackToDiscover,
     /// The debounce delay for search `generation` has passed.
@@ -519,7 +521,8 @@ impl App {
             | Action::AlbumLoaded { .. }
             | Action::ArtFetched { .. }
             | Action::ArtEncoded { .. }
-            | Action::Player { .. }) => self.background_update(other),
+            | Action::Player { .. }
+            | Action::Notice(_)) => self.background_update(other),
         }
     }
 
@@ -538,6 +541,10 @@ impl App {
                 result,
             } => self.art_encoded(id, art_box, result),
             Action::Player { event, status } => self.player_update(event, status),
+            Action::Notice(text) => {
+                self.info(text);
+                vec![]
+            }
             _ => vec![],
         }
     }
@@ -1416,6 +1423,7 @@ impl Action {
                 | Self::ArtFetched { .. }
                 | Self::ArtEncoded { .. }
                 | Self::SearchDue(_)
+                | Self::Notice(_)
                 | Self::SearchLoaded { .. }
                 | Self::ArtistLoaded { .. }
                 | Self::Player { .. }
