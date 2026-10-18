@@ -17,8 +17,16 @@ clippy:
 test:
     cargo test --all-targets --locked
 
+# Smoke tests against the real bandcamp.com (needs network).
+test-live:
+    cargo test --test live -- --ignored
+
 deny:
     cargo deny check
 
 run *args:
     cargo run -- {{args}}
+
+# Stream the first playable Discover album through the speakers (no UI).
+play *args:
+    cargo run --release --example play_album -- {{args}}
