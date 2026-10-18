@@ -10,7 +10,8 @@ use super::types::{ArtId, ImageId};
 const IMAGE_HOST: &str = "https://f4.bcbits.com/img/";
 
 /// The square sizes we use, named by their Bandcamp size code. Pixel sizes were measured.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Ordered smallest to largest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ImageSize {
     /// 100×100 (code `3`).
     Px100,

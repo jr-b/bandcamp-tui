@@ -313,10 +313,19 @@ Everywhere else, the album pane is text only. **No halfblock or ASCII-art fallba
 ```
 
   Pressing `i` toggles an artist info panel (band bio, location, credits) in both modes.
-* **When art is enabled:** cover images are fetched at size `7` (150 px) only for the
-  *selected* album (debounced together with the detail fetch), resized once to the pane's cell
-  size, and cached as encoded protocol data (LRU of 16; see §2.2). If a fetch fails, the pane
-  falls back to text for that album.
+* **When art is enabled:** the cover is fetched only for the *selected* album (debounced
+  together with the detail fetch). If a fetch fails, the pane falls back to text for that album.
+* **Dynamic size** (`art::layout`): as large as the pane allows, snapped to 6/8/10/12/16/20
+  rows so resizing only re-encodes at step boundaries. It's capped by: 28 columns kept for the
+  text beside it, at most 45 % of the pane height, at least 6 tracklist rows below, and 20 rows.
+  Square in pixels using the terminal's measured cell size. The narrow single-pane layout caps
+  it at 8 rows. Below 6 rows the pane is text-only. Beside a tall cover the text lists one fact
+  per line plus tags and the start of the description.
+* **Fetch and cache:** the smallest Bandcamp size that covers the box (150/350/700 px) is
+  downloaded and kept compressed (LRU of 32 JPEGs, ~10–80 KB each). Encodings are cached per
+  size (LRU of 16). After every draw, `App::after_draw` re-encodes the current cover if the box
+  changed, or re-downloads it bigger if the box outgrew the source. While that happens, the
+  largest earlier encoding that still fits stays on screen.
 Album details load as you move the cursor (debounced ~250 ms, cached in an LRU).
 
 **Keybindings** (vim and arrow keys both work; `?` shows all of them):
@@ -394,7 +403,22 @@ Infinite scroll: when the selection gets within 10 items of the end and `cursor 
   reloading; changing a filter also returns to Discover. Album pane, play, autoplay, art and
   `o` all work on these lists (`o` uses the album's own URL once loaded, since discography
   entries only carry the artist page).
-* Not done (stretch): MPRIS/media keys, cross-album queue.
+* Not done (stretch): cross-album queue, and media keys (deliberately skipped for now; findings
+  below, for whenever it's picked up).
+
+### Media keys: research notes (not implemented)
+
+* **macOS** needs a run loop on the main thread: MediaPlayer delivers remote commands to the
+  main dispatch queue. A prototype showed `core-foundation`'s safe `CFRunLoop` API services it
+  with no CPU cost, so the TUI would move to a second thread on macOS and exit the process
+  itself when done. Unverified: whether macOS routes media keys to a terminal process that
+  isn't a full Cocoa app (needs a real keypress to test; the fallback is a background Cocoa app
+  setup).
+* **Options compared:** `souvlaki` everywhere (+22 crates of a legacy Apple binding stack on
+  macOS; Linux uses libdbus); `objc2-media-player` directly on macOS (+1 crate, the rest is
+  already in the tree via cpal, but every call is `unsafe`); `mpris-server` on Linux (pure
+  Rust, ~90 crates). Leaning: `objc2-media-player` on macOS plus `souvlaki` on Linux only
+  (platform-specific dependency). Windows would be skipped (it needs a real window).
 
 ## 6. Best practices checklist
 

@@ -9,14 +9,15 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{ACCENT, pane};
 use crate::app::{AlbumView, App, Focus};
-use crate::art::{ART_COLS, ART_ROWS, Art};
+use crate::art::{Art, ArtBox};
 use crate::bandcamp::{Album, DiscoverItem};
 use crate::format;
 
-/// Show the cover only if the text beside it still gets this many columns.
-const MIN_TEXT_BESIDE_ART: u16 = 28;
+/// With at least this many rows beside the cover, the text lists one fact per line.
+const TALL_HEADER_ROWS: u16 = 8;
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
+/// `compact`: the narrow single-pane layout, which keeps the cover small.
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, compact: bool) {
     let focused = app.focus == Focus::Album;
     let show_info = app.album_pane.show_info;
     let mut block = pane(if show_info { "About" } else { "Album" }, focused);
@@ -26,16 +27,18 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    // Recorded for `App::after_draw`, which fetches or re-encodes the cover at this size.
+    app.album_pane.art_box = if app.art_enabled {
+        crate::art::layout(inner.width, inner.height, app.art_font, compact)
+    } else {
+        None
+    };
 
     match app.album_view() {
         AlbumView::None => {}
         AlbumView::Loading(item) => {
-            let art = art_slot(app, item.art_id, inner);
-            let text_width = if art.is_some() {
-                inner.width.saturating_sub(ART_COLS + 1)
-            } else {
-                inner.width
-            };
+            let art = art_slot(app, item.art_id);
+            let text_width = text_width_beside(art, inner.width);
             let mut text = summary_from_item(item, text_width);
             text.push_line(Line::default());
             text.push_line(Line::from("Loading tracks…").dim());
@@ -63,8 +66,12 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-/// Title, artist, label and facts. `width` is used to keep each line on one row.
-fn summary(album: &Album, width: u16) -> Text<'static> {
+/// Title, artist, label and facts, each kept to one row of `width`. With `rows` of room
+/// (beside a tall cover) it lists one fact per line and adds more detail.
+fn summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
+    if rows >= TALL_HEADER_ROWS {
+        return tall_summary(album, width, rows);
+    }
     let width = usize::from(width);
     let dim = Style::new().dim();
     let mut lines = vec![Line::from(format::truncate(&album.title, width).into_owned()).bold()];
@@ -116,6 +123,81 @@ fn summary(album: &Album, width: u16) -> Text<'static> {
     Text::from(lines)
 }
 
+/// The header beside a tall cover: one fact per line, then tags and the start of "about",
+/// cut to `rows` lines.
+fn tall_summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
+    let width = usize::from(width);
+    let dim = Style::new().dim();
+    let line = |label: &str, value: &str| {
+        fit(
+            Line::from(vec![
+                Span::styled(format!("{label} "), dim),
+                Span::raw(value.to_owned()),
+            ]),
+            width,
+        )
+    };
+    let mut lines = vec![
+        Line::from(format::truncate(&album.title, width).into_owned()).bold(),
+        line("by", &album.artist),
+    ];
+    if album.band.name != album.artist {
+        lines.push(line("on", &album.band.name));
+    }
+    if let Some(label) = album.label.as_ref().filter(|l| **l != album.band.name) {
+        lines.push(line("label", label));
+    }
+    let n = album.tracks.len();
+    let mut size = format!("{n} track{}", if n == 1 { "" } else { "s" });
+    if !album.duration().is_zero() {
+        size.push_str(" · ");
+        size.push_str(&format::length(album.duration()));
+    }
+    lines.push(fit(Line::from(size), width));
+    if let Some(date) = album.release_date {
+        let verb = if album.is_preorder { "out" } else { "released" };
+        lines.push(line(verb, &date.to_string()));
+    }
+    if let Some(location) = &album.band.location {
+        lines.push(line("from", location));
+    }
+    if album.is_preorder {
+        let playable = album.tracks.iter().filter(|t| t.is_playable()).count();
+        lines.push(
+            fit(
+                Line::from(format!("pre-order · {playable} of {n} streamable now")),
+                width,
+            )
+            .fg(Color::Yellow),
+        );
+    }
+    if !album.tags.is_empty() {
+        let tags = album
+            .tags
+            .iter()
+            .map(|t| format!("#{}", t.norm_name))
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push(Line::from(format::truncate(&tags, width).into_owned()).fg(ACCENT));
+    }
+    // Fill what's left with the start of the description.
+    let room = usize::from(rows).saturating_sub(lines.len() + 1);
+    if room > 0
+        && let Some(about) = &album.about
+    {
+        lines.push(Line::default());
+        lines.extend(
+            about
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .take(room)
+                .map(|l| Line::from(format::truncate(l.trim(), width).into_owned()).dim()),
+        );
+    }
+    lines.truncate(usize::from(rows));
+    Text::from(lines)
+}
+
 /// What we know from the discover feed while the details load.
 fn summary_from_item(item: &DiscoverItem, width: u16) -> Text<'static> {
     let width = usize::from(width);
@@ -160,14 +242,18 @@ fn fit(line: Line<'static>, width: usize) -> Line<'static> {
     Line::from(spans).style(line.style)
 }
 
-/// Where (and whether) to draw the cover: `None` for text-only.
-type ArtSlot<'a> = Option<Option<&'a Art>>;
+/// Where (and whether) to draw the cover: `None` for text-only; otherwise its box and the
+/// encoded cover, if it's ready.
+type ArtSlot<'a> = Option<(ArtBox, Option<&'a Art>)>;
 
-fn art_slot(app: &App, id: Option<crate::bandcamp::ArtId>, area: Rect) -> ArtSlot<'_> {
-    if area.width < ART_COLS + 1 + MIN_TEXT_BESIDE_ART || area.height < ART_ROWS + 4 {
-        return None;
-    }
-    app.art_for(id)
+fn art_slot(app: &App, id: Option<crate::bandcamp::ArtId>) -> ArtSlot<'_> {
+    let art_box = app.album_pane.art_box?;
+    Some((art_box, app.art_for(id)?))
+}
+
+/// Columns left for the text beside the cover.
+fn text_width_beside(art: ArtSlot<'_>, width: u16) -> u16 {
+    art.map_or(width, |(b, _)| width.saturating_sub(b.cols + 1))
 }
 
 /// Lays out the header: cover on the left (or a placeholder while it loads), text on the
@@ -178,22 +264,22 @@ fn header_with_art(
     art: ArtSlot<'_>,
     text_lines: u16,
 ) -> (Rect, Rect) {
-    let Some(art) = art else {
+    let Some((art_box, art)) = art else {
         let [text, rest] =
             Layout::vertical([Constraint::Length(text_lines), Constraint::Min(0)]).areas(area);
         return (text, rest);
     };
-    let height = text_lines.max(ART_ROWS);
+    let height = text_lines.max(art_box.rows);
     let [top, rest] =
         Layout::vertical([Constraint::Length(height), Constraint::Min(0)]).areas(area);
     let [cover, _, text] = Layout::horizontal([
-        Constraint::Length(ART_COLS),
+        Constraint::Length(art_box.cols),
         Constraint::Length(1),
         Constraint::Min(0),
     ])
     .areas(top);
     let cover = Rect {
-        height: ART_ROWS,
+        height: art_box.rows,
         ..cover
     };
     if let Some(art) = art {
@@ -211,13 +297,10 @@ fn header_with_art(
 }
 
 fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focused: bool) {
-    let art = art_slot(app, album.art_id, area);
-    let text_width = if art.is_some() {
-        area.width.saturating_sub(ART_COLS + 1)
-    } else {
-        area.width
-    };
-    let header = summary(album, text_width);
+    let art = art_slot(app, album.art_id);
+    let text_width = text_width_beside(art, area.width);
+    let header_rows = art.map_or(0, |(b, _)| b.rows);
+    let header = summary(album, text_width, header_rows);
     let lines = u16::try_from(header.lines.len()).unwrap_or(0);
     let (text_area, rest) = header_with_art(frame, area, art, lines);
     frame.render_widget(Paragraph::new(header), text_area);
@@ -274,7 +357,7 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
 }
 
 fn draw_info(frame: &mut Frame, area: Rect, album: &Album, app: &mut App) {
-    let mut text = summary(album, area.width);
+    let mut text = summary(album, area.width, 0);
     let heading = |s: &'static str| Line::from(s).fg(ACCENT).bold();
     let mut section = |title: &'static str, body: &str| {
         text.push_line(Line::default());

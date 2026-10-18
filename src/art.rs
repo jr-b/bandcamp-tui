@@ -9,29 +9,82 @@ use std::sync::Arc;
 use ratatui::layout::Size;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
-use ratatui_image::{FilterType, Resize};
+use ratatui_image::{FilterType, FontSize, Resize};
 
+use crate::bandcamp::images::ImageSize;
 use crate::config::AlbumArt;
 
-/// Size of the cover in terminal cells. With the usual 1:2 cell aspect this is square; the
-/// 150 px source image (Bandcamp size code 7) fills it on most fonts without upscaling.
-pub const ART_COLS: u16 = 16;
-pub const ART_ROWS: u16 = 8;
+/// Cover heights we use, in rows. Snapping to a few steps means resizing the terminal only
+/// re-encodes the image when it crosses a step, not on every column.
+const ROW_STEPS: [u16; 6] = [6, 8, 10, 12, 16, 20];
+/// The narrow single-pane layout keeps the cover small so more of the tracklist shows.
+const COMPACT_MAX_ROWS: u16 = 8;
+/// The text beside the cover always gets at least this many columns.
+pub const MIN_TEXT_COLS: u16 = 28;
+/// At least this many tracklist rows stay visible under the cover.
+const MIN_TRACK_ROWS: u16 = 6;
+/// The cover takes at most this share of the pane's height.
+const MAX_HEIGHT_PERCENT: u16 = 45;
 
-/// A cover encoded once for the terminal's graphics protocol; the source image is dropped.
+/// Where a cover fits, in terminal cells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ArtBox {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// How big the cover can be in a pane of `width`×`height` cells: as large as possible while
+/// the text beside it and the tracklist below keep their room, snapped to [`ROW_STEPS`].
+/// `None` when even the smallest step doesn't fit (then the pane is text-only).
+#[must_use]
+pub fn layout(width: u16, height: u16, font: FontSize, compact: bool) -> Option<ArtBox> {
+    let (cell_w, cell_h) = (u32::from(font.width.max(1)), u32::from(font.height.max(1)));
+    // Columns needed for `rows` rows so the cover is square in pixels.
+    let cols_for = |rows: u16| (u32::from(rows) * cell_h).div_ceil(cell_w);
+    let max_cols = u32::from(width.saturating_sub(MIN_TEXT_COLS + 1));
+    let max_rows = (height * MAX_HEIGHT_PERCENT / 100)
+        .min(height.saturating_sub(MIN_TRACK_ROWS + 1))
+        .min(if compact { COMPACT_MAX_ROWS } else { u16::MAX });
+    ROW_STEPS
+        .iter()
+        .rev()
+        .copied()
+        .find(|&rows| rows <= max_rows && cols_for(rows) <= max_cols)
+        .and_then(|rows| {
+            let cols = u16::try_from(cols_for(rows)).ok()?;
+            Some(ArtBox { cols, rows })
+        })
+}
+
+/// The smallest Bandcamp image that covers `art_box` at this font size without upscaling.
+#[must_use]
+pub fn source_size(art_box: ArtBox, font: FontSize) -> ImageSize {
+    let pixels = (u32::from(art_box.cols) * u32::from(font.width))
+        .max(u32::from(art_box.rows) * u32::from(font.height));
+    match pixels {
+        0..=150 => ImageSize::Px150,
+        151..=350 => ImageSize::Px350,
+        _ => ImageSize::Px700,
+    }
+}
+
+/// A cover encoded for the terminal's graphics protocol at one [`ArtBox`] size.
 #[derive(Clone)]
-pub struct Art(Arc<Protocol>);
+pub struct Art {
+    protocol: Arc<Protocol>,
+    pub art_box: ArtBox,
+}
 
 impl Art {
     #[must_use]
     pub fn protocol(&self) -> &Protocol {
-        &self.0
+        &self.protocol
     }
 }
 
 impl PartialEq for Art {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.protocol, &other.protocol)
     }
 }
 
@@ -102,19 +155,23 @@ fn protocol_from_env() -> Option<ProtocolType> {
     }
 }
 
-/// Decodes a JPEG cover and encodes it for the terminal at [`ART_COLS`]×[`ART_ROWS`] cells.
+/// Decodes a JPEG cover and encodes it for the terminal to fill `art_box`.
 /// CPU-bound: call from a blocking task.
-pub fn encode(picker: &Picker, jpeg: &[u8]) -> Result<Art, String> {
+pub fn encode(picker: &Picker, jpeg: &[u8], art_box: ArtBox) -> Result<Art, String> {
     let image = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg)
         .map_err(|e| format!("couldn't decode cover: {e}"))?;
     let protocol = picker
         .new_protocol(
             image,
-            Size::new(ART_COLS, ART_ROWS),
-            Resize::Fit(Some(FilterType::Triangle)),
+            Size::new(art_box.cols, art_box.rows),
+            // Scale (unlike Fit) also enlarges, so the cover always fills its box.
+            Resize::Scale(Some(FilterType::Triangle)),
         )
         .map_err(|e| format!("couldn't encode cover: {e}"))?;
-    Ok(Art(Arc::new(protocol)))
+    Ok(Art {
+        protocol: Arc::new(protocol),
+        art_box,
+    })
 }
 
 #[cfg(test)]
@@ -159,10 +216,93 @@ pub(crate) mod tests {
         out.into_inner()
     }
 
+    pub(crate) const TEST_BOX: ArtBox = ArtBox { cols: 16, rows: 8 };
+
     #[test]
     fn encodes_a_jpeg_and_rejects_garbage() {
         let picker = Picker::halfblocks();
-        assert!(encode(&picker, &test_jpeg()).is_ok());
-        assert!(encode(&picker, b"not a jpeg").is_err());
+        let art = encode(&picker, &test_jpeg(), TEST_BOX).unwrap();
+        assert_eq!(art.art_box, TEST_BOX);
+        assert!(art.protocol().size().width <= TEST_BOX.cols);
+        assert!(art.protocol().size().height <= TEST_BOX.rows);
+        assert!(encode(&picker, b"not a jpeg", TEST_BOX).is_err());
+    }
+
+    /// A common 10×20 px cell: two rows of pixels per column of pixels.
+    const FONT: FontSize = FontSize::new(10, 20);
+
+    #[test]
+    fn grows_with_the_pane_in_steps() {
+        // Roomy pane: limited by the 20-row cap.
+        assert_eq!(
+            layout(120, 60, FONT, false),
+            Some(ArtBox { cols: 40, rows: 20 })
+        );
+        // Height-limited: 45 % of 30 rows is 13, so the 12-row step.
+        assert_eq!(
+            layout(120, 30, FONT, false),
+            Some(ArtBox { cols: 24, rows: 12 })
+        );
+        // Width-limited: 60 - 29 = 31 columns for the cover, so 12 rows (24 cols) fits, 16 doesn't.
+        assert_eq!(
+            layout(60, 60, FONT, false),
+            Some(ArtBox { cols: 24, rows: 12 })
+        );
+        // Just above the smallest step.
+        assert_eq!(
+            layout(41, 14, FONT, false),
+            Some(ArtBox { cols: 12, rows: 6 })
+        );
+    }
+
+    #[test]
+    fn hides_when_there_is_no_room() {
+        assert_eq!(layout(40, 60, FONT, false), None, "text needs 28 columns");
+        assert_eq!(layout(120, 12, FONT, false), None, "tracklist needs 6 rows");
+        assert_eq!(layout(0, 0, FONT, false), None);
+    }
+
+    #[test]
+    fn compact_caps_the_size() {
+        assert_eq!(
+            layout(120, 60, FONT, true),
+            Some(ArtBox { cols: 16, rows: 8 })
+        );
+        assert_eq!(
+            layout(120, 14, FONT, true),
+            Some(ArtBox { cols: 12, rows: 6 })
+        );
+    }
+
+    #[test]
+    fn stays_square_for_other_fonts() {
+        // Square cells (some sixel terminals report this): as many columns as rows.
+        let square = FontSize::new(16, 16);
+        assert_eq!(
+            layout(120, 30, square, false),
+            Some(ArtBox { cols: 12, rows: 12 })
+        );
+        // Odd sizes round the width up, never squashing the cover.
+        let odd = FontSize::new(9, 19);
+        assert_eq!(
+            layout(120, 30, odd, false),
+            Some(ArtBox { cols: 26, rows: 12 })
+        );
+    }
+
+    #[test]
+    fn picks_the_smallest_source_that_covers_the_box() {
+        assert_eq!(
+            source_size(ArtBox { cols: 12, rows: 6 }, FONT),
+            ImageSize::Px150
+        );
+        assert_eq!(
+            source_size(ArtBox { cols: 24, rows: 12 }, FONT),
+            ImageSize::Px350
+        );
+        assert_eq!(
+            source_size(ArtBox { cols: 40, rows: 20 }, FONT),
+            ImageSize::Px700
+        );
     }
 }
