@@ -114,6 +114,12 @@ undocumented endpoints that may change at any time. It streams music the same wa
 Bandcamp website does and never saves audio to disk. If you like what you hear, buy it on
 Bandcamp: press `o` to open the album page.
 
+## AI assistance
+
+This project was developed with substantial help from
+[Claude Code](https://claude.com/claude-code). I directed the design, reviewed
+and tested the changes, and I'm responsible for the code. Contributors are asked to disclose AI use. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 Licensed under [Creative Commons Attribution-NonCommercial 4.0 International](LICENSE)
