@@ -7,7 +7,7 @@ Issues and pull requests are welcome.
 Run the same checks as CI (see [Development](README.md#development) in the README):
 
 ```sh
-just ci      # fmt check, clippy, tests, cargo-deny
+make ci      # fmt check, clippy, tests, cargo-deny
 ```
 
 Keep changes focused, and add or update tests for behaviour you change. UI changes usually

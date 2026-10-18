@@ -1,5 +1,5 @@
 //! Smoke tests against the real Bandcamp. Ignored by default because they need the network
-//! and Bandcamp's undocumented API may change. Run with `just test-live`.
+//! and Bandcamp's undocumented API may change. Run with `make test-live`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 

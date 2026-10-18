@@ -89,14 +89,14 @@ set -g allow-passthrough on
 
 ## Development
 
-[`just`](https://github.com/casey/just) recipes mirror CI:
+`make` targets mirror CI:
 
 ```sh
-just ci    # fmt check, clippy, tests, cargo-deny
-just run   # run the app
+make ci    # fmt check, clippy, tests, cargo-deny
+make run   # run the app
 ```
 
-`just ci` needs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
+`make ci` needs [cargo-deny](https://github.com/EmbarkStudios/cargo-deny).
 
 ## Disclaimer
 
