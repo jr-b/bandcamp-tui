@@ -22,6 +22,7 @@ pub const HINTS: &[(&str, &str)] = &[
     ("L", "place"),
     ("i", "info"),
     ("e", "queue"),
+    ("v", "listen"),
     ("a", "autoplay"),
     ("s", "sort"),
     ("r", "refresh"),
@@ -35,6 +36,21 @@ pub const QUEUE_HINTS: &[(&str, &str)] = &[
     ("K/J", "move"),
     ("c", "clear"),
     ("esc", "close"),
+];
+
+/// Hints shown in the listening view.
+pub const LISTENING_HINTS: &[(&str, &str)] = &[
+    ("space", "pause"),
+    ("v", "browse"),
+    ("i", "info"),
+    ("n/p", "track"),
+    ("←→", "seek"),
+    ("+/-", "volume"),
+    ("u", "queue"),
+    ("a", "autoplay"),
+    ("o", "open"),
+    ("?", "help"),
+    ("q", "quit"),
 ];
 
 /// Hints shown while a picker is open.
@@ -55,7 +71,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("g G  Home End", "top / bottom"),
             ("PgUp PgDn  ^u ^d", "page"),
             ("tab  h l", "switch pane"),
-            ("i", "album about / credits / artist"),
+            ("i", "album about / credits / artist (also while listening)"),
             ("o", "open on bandcamp.com"),
         ],
     ),
@@ -68,6 +84,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("← →  , .", "seek 10 s"),
             ("+ -", "volume"),
             ("a", "autoplay: continue with the next release"),
+            ("v", "listening view: big cover, back to browse"),
         ],
     ),
     (
@@ -103,6 +120,8 @@ pub enum Mode {
     Help,
     /// The queue popup is open.
     Queue,
+    /// The listening view: transport keys only.
+    Listening,
 }
 
 /// Maps a key to an action for the current mode.
@@ -118,6 +137,7 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         Mode::Help if ctrl && key.code == KeyCode::Char('c') => return Some(Action::Quit),
         Mode::Help => return Some(Action::CloseHelp),
         Mode::Queue => return queue_action(key),
+        Mode::Listening => return listening_action(key),
         Mode::Normal => {}
     }
     let action = match key.code {
@@ -153,6 +173,7 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Char('e') => Action::Enqueue,
         KeyCode::Char('E') => Action::EnqueueNext,
         KeyCode::Char('u') => Action::OpenQueue,
+        KeyCode::Char('v') => Action::ToggleListening,
         KeyCode::Char('/') => Action::OpenSearch,
         KeyCode::Esc => Action::BackToDiscover,
         KeyCode::Char('?') => Action::ShowHelp,
@@ -181,6 +202,38 @@ fn queue_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char(' ') => Action::TogglePause,
         KeyCode::Char('n') => Action::NextTrack,
         KeyCode::Char('p') => Action::PreviousTrack,
+        _ => return None,
+    };
+    Some(action)
+}
+
+fn listening_action(key: KeyEvent) -> Option<Action> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let action = match key.code {
+        KeyCode::Char('c') if ctrl => Action::Quit,
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('v') | KeyCode::Esc => Action::ToggleListening,
+        KeyCode::Char('i') => Action::ToggleInfo,
+        // Scroll the info text.
+        KeyCode::Char('d') if ctrl => Action::PageDown,
+        KeyCode::Char('u') if ctrl => Action::PageUp,
+        KeyCode::Char('k') | KeyCode::Up => Action::Up,
+        KeyCode::Char('j') | KeyCode::Down => Action::Down,
+        KeyCode::PageUp => Action::PageUp,
+        KeyCode::PageDown => Action::PageDown,
+        KeyCode::Char('g') | KeyCode::Home => Action::Top,
+        KeyCode::Char('G') | KeyCode::End => Action::Bottom,
+        KeyCode::Char(' ') => Action::TogglePause,
+        KeyCode::Char('n') => Action::NextTrack,
+        KeyCode::Char('p') => Action::PreviousTrack,
+        KeyCode::Right | KeyCode::Char('.') => Action::SeekForward,
+        KeyCode::Left | KeyCode::Char(',') => Action::SeekBackward,
+        KeyCode::Char('+' | '=') => Action::VolumeUp,
+        KeyCode::Char('-' | '_') => Action::VolumeDown,
+        KeyCode::Char('a') => Action::ToggleAutoplay,
+        KeyCode::Char('u') => Action::OpenQueue,
+        KeyCode::Char('o') => Action::OpenInBrowser,
+        KeyCode::Char('?') => Action::ShowHelp,
         _ => return None,
     };
     Some(action)
@@ -296,6 +349,28 @@ mod tests {
         assert_eq!(press(KeyCode::Char('e')), Some(Action::Enqueue));
         assert_eq!(press(KeyCode::Char('E')), Some(Action::EnqueueNext));
         assert_eq!(press(KeyCode::Char('u')), Some(Action::OpenQueue));
+    }
+
+    #[test]
+    fn listening_view_keys() {
+        let listen = |code| action_for(KeyEvent::new(code, KeyModifiers::NONE), Mode::Listening);
+        assert_eq!(press(KeyCode::Char('v')), Some(Action::ToggleListening));
+        assert_eq!(listen(KeyCode::Char('v')), Some(Action::ToggleListening));
+        assert_eq!(listen(KeyCode::Esc), Some(Action::ToggleListening));
+        assert_eq!(listen(KeyCode::Char(' ')), Some(Action::TogglePause));
+        assert_eq!(listen(KeyCode::Right), Some(Action::SeekForward));
+        assert_eq!(listen(KeyCode::Char('u')), Some(Action::OpenQueue));
+        assert_eq!(listen(KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(listen(KeyCode::Char('i')), Some(Action::ToggleInfo));
+        assert_eq!(
+            listen(KeyCode::Char('j')),
+            Some(Action::Down),
+            "scrolls the info"
+        );
+        // Browsing keys do nothing: there's no list here.
+        assert_eq!(listen(KeyCode::Enter), None);
+        assert_eq!(listen(KeyCode::Char('f')), None);
+        assert_eq!(listen(KeyCode::Char('/')), None);
     }
 
     #[test]

@@ -55,6 +55,7 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `e` / `E` | add the release (or, in the tracklist, the track) to the queue / play it next |
 | `u` | the queue: `⏎` play now, `d` remove, `K`/`J` move, `c` clear |
 | `a` | autoplay on/off (continue with the next release when the queue runs out) |
+| `v` | listening view: only what's playing, with a large cover; `i` shows the album's about / credits / artist (`v` or `esc` to go back) |
 | `tab`, `h` / `l` | switch pane |
 | `i` | album about / credits / artist bio |
 | `o` | open the release on bandcamp.com (to buy it) |
@@ -65,7 +66,7 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `r` | refresh |
 | `q`, `ctrl-c` | quit |
 
-Filters, volume and the queue are remembered in `state.toml`, next to the log file
+Filters, volume, the queue and whether the listening view was open are remembered in `state.toml`, next to the log file
 (`~/Library/Application Support/bandcamp-tui/` on macOS, `~/.local/share/bandcamp-tui/` on Linux).
 
 ## Configuration
@@ -79,6 +80,8 @@ album_art = "auto"
 # When an album ends, continue with the next Discover release (skipping pre-orders and
 # anything unplayable). Default true; `a` toggles it for the current session.
 autoplay = true
+# Switch to the listening view (`v`) whenever the queue starts a release. Default false.
+listen_on_queue = false
 ```
 
 ### Album art and tmux

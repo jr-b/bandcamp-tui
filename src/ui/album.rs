@@ -58,7 +58,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, compact: bool) 
         AlbumView::Loaded(album) => {
             let album = std::sync::Arc::clone(album);
             if show_info {
-                draw_info(frame, inner, &album, app);
+                draw_info(frame, inner, &album, &mut app.album_pane.info_scroll);
             } else {
                 draw_tracks(frame, inner, &album, app, focused);
             }
@@ -356,7 +356,8 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
     frame.render_stateful_widget(table, list, &mut app.album_pane.tracks);
 }
 
-fn draw_info(frame: &mut Frame, area: Rect, album: &Album, app: &mut App) {
+/// About, credits and the artist bio, scrolled by `scroll` (clamped here to the text height).
+pub(super) fn draw_info(frame: &mut Frame, area: Rect, album: &Album, scroll: &mut u16) {
     let mut text = summary(album, area.width, 0);
     let heading = |s: &'static str| Line::from(s).fg(ACCENT).bold();
     let mut section = |title: &'static str, body: &str| {
@@ -391,7 +392,6 @@ fn draw_info(frame: &mut Frame, area: Rect, album: &Album, app: &mut App) {
     let max_scroll = paragraph
         .line_count(area.width)
         .saturating_sub(usize::from(area.height));
-    let scroll = usize::from(app.album_pane.info_scroll).min(max_scroll);
-    app.album_pane.info_scroll = u16::try_from(scroll).unwrap_or(u16::MAX);
-    frame.render_widget(paragraph.scroll((app.album_pane.info_scroll, 0)), area);
+    *scroll = u16::try_from(usize::from(*scroll).min(max_scroll)).unwrap_or(u16::MAX);
+    frame.render_widget(paragraph.scroll((*scroll, 0)), area);
 }

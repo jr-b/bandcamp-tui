@@ -1,4 +1,5 @@
-//! Remembered state between runs: the last Discover filters and the volume.
+//! Remembered state between runs: the last Discover filters, the volume, the queue and
+//! whether the listening view was open.
 //!
 //! Stored as `state.toml` next to the log file. It's written by the app (not meant for hand
 //! editing), so a missing or broken file just means defaults.
@@ -8,6 +9,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::app::Screen;
 use crate::bandcamp::{DiscoverQuery, Slice};
 use crate::queue::QueueEntry;
 
@@ -20,6 +22,8 @@ pub struct Settings {
     /// The play queue, restored at startup without starting playback.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub queue: Vec<QueueEntry>,
+    /// Browsing or the listening view.
+    pub screen: Screen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -38,6 +42,7 @@ impl Default for Settings {
             discover: DiscoverSettings::default(),
             volume: 1.0,
             queue: Vec::new(),
+            screen: Screen::Browse,
         }
     }
 }
@@ -103,6 +108,7 @@ impl Settings {
             },
             volume,
             queue: Vec::new(),
+            screen: Screen::Browse,
         }
     }
 }
@@ -160,10 +166,12 @@ mod tests {
         };
         let mut settings = Settings::from_state(&DiscoverQuery::default(), 0.5);
         settings.queue = vec![entry, single];
+        settings.screen = Screen::Listening;
         settings.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[[queue]]"), "{text}");
         assert!(text.contains("kind = \"album\""), "{text}");
+        assert!(text.contains("screen = \"listening\""), "{text}");
         assert_eq!(Settings::load(&path), settings);
     }
 
@@ -186,5 +194,6 @@ mod tests {
         assert!((loaded.volume - 1.0).abs() < f32::EPSILON);
         assert_eq!(loaded.discover.slice, Slice::Random);
         assert_eq!(loaded.discover.tags, Vec::<String>::new());
+        assert_eq!(loaded.screen, Screen::Browse);
     }
 }

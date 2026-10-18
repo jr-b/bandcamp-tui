@@ -4,6 +4,7 @@
 mod album;
 mod discover;
 mod help;
+mod listening;
 mod now_playing;
 mod picker;
 mod queue;
@@ -15,26 +16,34 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use crate::app::{App, Focus, ListSource, MessageKind};
+use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
 use crate::format;
-use crate::input::{HINTS, PICKER_HINTS, QUEUE_HINTS};
+use crate::input::{HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
 
 const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
 const TWO_PANE_MIN_WIDTH: u16 = 90;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    // The listening view shows the track and progress itself: no now-playing bar.
+    let bar_rows = if app.screen == Screen::Listening {
+        0
+    } else {
+        3
+    };
     let [header, body, now_playing, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(5),
-        Constraint::Length(3),
+        Constraint::Length(bar_rows),
         Constraint::Length(1),
     ])
     .areas(frame.area());
 
     draw_header(frame, header, app);
-    if body.width >= TWO_PANE_MIN_WIDTH {
+    if app.screen == Screen::Listening {
+        listening::draw(frame, body, app);
+    } else if body.width >= TWO_PANE_MIN_WIDTH {
         let [list, album] =
             Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .areas(body);
@@ -46,7 +55,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Focus::Album => album::draw(frame, body, app, true),
         }
     }
-    now_playing::draw(frame, now_playing, app);
+    if app.screen == Screen::Browse {
+        now_playing::draw(frame, now_playing, app);
+    }
     draw_footer(frame, footer, app);
     if let Some(picker) = app.picker.as_mut() {
         picker::draw(frame, body, picker);
@@ -135,6 +146,8 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 PICKER_HINTS
             } else if app.queue_view.is_some() {
                 QUEUE_HINTS
+            } else if app.screen == Screen::Listening {
+                LISTENING_HINTS
             } else {
                 HINTS
             };
@@ -473,7 +486,112 @@ mod tests {
     fn help_overlay() {
         let mut app = app_with_page();
         app.update(Action::ShowHelp);
-        insta::assert_snapshot!(render(&mut app, 100, 34).backend());
+        insta::assert_snapshot!(render(&mut app, 100, 36).backend());
+    }
+
+    fn listening_to_joyride(app: &mut App, state: PlaybackState) {
+        show_album(app, fixture_album("album"));
+        app.update(Action::Play);
+        app.update(Action::Player {
+            event: None,
+            status: Status {
+                state,
+                index: Some(1),
+                position: Duration::from_secs(72),
+                duration: Duration::from_secs(231),
+                volume: 0.8,
+            },
+        });
+        app.update(Action::ToggleListening);
+    }
+
+    #[test]
+    fn listening_view_nothing_playing() {
+        let mut app = app_with_page();
+        app.update(Action::ToggleListening);
+        insta::assert_snapshot!(render(&mut app, 100, 20).backend());
+    }
+
+    #[test]
+    fn listening_view_without_the_queue() {
+        let mut app = app_with_page();
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        let terminal = render(&mut app, 100, 20);
+        let text = format!("{}", terminal.backend());
+        assert!(!text.contains("Now playing"), "no bar: {text}");
+        assert!(text.contains("next: "), "{text}");
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn listening_view_with_queue_and_cover() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        listening_to_joyride(&mut app, PlaybackState::Paused);
+        // Single-track entry from the last track: "next" comes from the queue.
+        app.update(Action::ToggleListening);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        app.update(Action::ToggleListening);
+        let last = app.now_playing.as_ref().unwrap().tracks.len() - 1;
+        app.update(Action::Player {
+            event: None,
+            status: Status {
+                index: Some(last),
+                ..app.player.clone()
+            },
+        });
+
+        render(&mut app, 100, 40);
+        let art_box = app.listening.art_box.expect("room for a cover");
+        assert!(art_box.rows >= 24, "{art_box:?}");
+        let art_id = app.now_playing.as_ref().unwrap().art_id.unwrap();
+        let art = crate::art::encode(
+            &ratatui_image::picker::Picker::halfblocks(),
+            &crate::art::tests::test_jpeg(),
+            art_box,
+        )
+        .unwrap();
+        app.update(Action::ArtEncoded {
+            id: art_id,
+            art_box,
+            result: Ok(art),
+        });
+        let terminal = render(&mut app, 100, 40);
+        assert!(halfblock_cells(&terminal) > 300, "cover not drawn");
+        let text = format!("{}", terminal.backend());
+        assert!(text.contains("(paused)"), "{text}");
+        assert!(text.contains("(+1 queued)"), "{text}");
+        insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn listening_view_info() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleInfo);
+        let terminal = render(&mut app, 100, 30);
+        assert_eq!(app.listening.art_box, None, "no cover behind the text");
+        let text = format!("{}", terminal.backend());
+        assert!(text.contains("i cover"), "{text}");
+        assert!(text.contains("About") && text.contains("Artist"), "{text}");
+        insta::assert_snapshot!(terminal.backend());
+
+        // Scrolled past the end in a short terminal: clamped to the text.
+        app.update(Action::Bottom);
+        render(&mut app, 100, 16);
+        let scroll = app.listening.info_scroll;
+        assert!(scroll > 0 && scroll < u16::MAX, "{scroll}");
+    }
+
+    #[test]
+    fn listening_view_narrow() {
+        let mut app = app_with_page();
+        listening_to_joyride(&mut app, PlaybackState::Buffering);
+        insta::assert_snapshot!(render(&mut app, 50, 14).backend());
     }
 
     #[test]

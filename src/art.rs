@@ -25,6 +25,12 @@ pub const MIN_TEXT_COLS: u16 = 28;
 const MIN_TRACK_ROWS: u16 = 6;
 /// The cover takes at most this share of the pane's height.
 const MAX_HEIGHT_PERCENT: u16 = 45;
+/// Cover heights for the listening view, which is all about the cover.
+const LISTENING_ROW_STEPS: [u16; 11] = [6, 8, 10, 12, 16, 20, 24, 28, 32, 40, 48];
+/// Rows the listening view keeps under the cover for the track, progress and up-next lines.
+pub const LISTENING_TEXT_ROWS: u16 = 8;
+/// Columns kept free on each side of the cover in the listening view.
+const LISTENING_SIDE_COLS: u16 = 2;
 
 /// Where a cover fits, in terminal cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,6 +62,25 @@ pub fn layout(width: u16, height: u16, font: FontSize, compact: bool) -> Option<
         })
 }
 
+/// How big the cover can be in the listening view of `width`×`height` cells: as large as
+/// possible with [`LISTENING_TEXT_ROWS`] left underneath, snapped to [`LISTENING_ROW_STEPS`].
+#[must_use]
+pub fn listening_layout(width: u16, height: u16, font: FontSize) -> Option<ArtBox> {
+    let (cell_w, cell_h) = (u32::from(font.width.max(1)), u32::from(font.height.max(1)));
+    let cols_for = |rows: u16| (u32::from(rows) * cell_h).div_ceil(cell_w);
+    let max_cols = u32::from(width.saturating_sub(2 * LISTENING_SIDE_COLS));
+    let max_rows = height.saturating_sub(LISTENING_TEXT_ROWS);
+    LISTENING_ROW_STEPS
+        .iter()
+        .rev()
+        .copied()
+        .find(|&rows| rows <= max_rows && cols_for(rows) <= max_cols)
+        .and_then(|rows| {
+            let cols = u16::try_from(cols_for(rows)).ok()?;
+            Some(ArtBox { cols, rows })
+        })
+}
+
 /// The smallest Bandcamp image that covers `art_box` at this font size without upscaling.
 #[must_use]
 pub fn source_size(art_box: ArtBox, font: FontSize) -> ImageSize {
@@ -64,7 +89,8 @@ pub fn source_size(art_box: ArtBox, font: FontSize) -> ImageSize {
     match pixels {
         0..=150 => ImageSize::Px150,
         151..=350 => ImageSize::Px350,
-        _ => ImageSize::Px700,
+        351..=700 => ImageSize::Px700,
+        _ => ImageSize::Px1200,
     }
 }
 
@@ -358,6 +384,30 @@ pub(crate) mod tests {
         assert_eq!(
             source_size(ArtBox { cols: 40, rows: 20 }, FONT),
             ImageSize::Px700
+        );
+        assert_eq!(
+            source_size(ArtBox { cols: 80, rows: 40 }, FONT),
+            ImageSize::Px1200
+        );
+    }
+
+    #[test]
+    fn listening_cover_fills_the_view() {
+        // 50 rows: 42 left above the text, so the 40-row step; 80 columns fit in 160 - 4.
+        assert_eq!(
+            listening_layout(160, 50, FONT),
+            Some(ArtBox { cols: 80, rows: 40 })
+        );
+        // Width-limited: 60 - 4 columns, so 28 rows (56 columns).
+        assert_eq!(
+            listening_layout(60, 60, FONT),
+            Some(ArtBox { cols: 56, rows: 28 })
+        );
+        // Too short for the text and the smallest cover.
+        assert_eq!(listening_layout(160, 13, FONT), None);
+        assert_eq!(
+            listening_layout(160, 14, FONT),
+            Some(ArtBox { cols: 12, rows: 6 })
         );
     }
 }

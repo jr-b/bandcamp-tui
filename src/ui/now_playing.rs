@@ -1,5 +1,7 @@
 //! The now-playing bar.
 
+use std::time::Duration;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
@@ -9,7 +11,7 @@ use ratatui::widgets::{Block, Borders};
 use super::ACCENT;
 use crate::app::App;
 use crate::format;
-use crate::player::PlaybackState;
+use crate::player::{PlaybackState, Status};
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let mut right = Vec::new();
@@ -50,13 +52,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
     let track = &album.tracks[index];
-    let (icon, state) = match status.state {
-        PlaybackState::Playing => ("▶", ""),
-        PlaybackState::Paused => ("‖", " (paused)"),
-        PlaybackState::Buffering => ("…", " (buffering)"),
-        PlaybackState::Loading => ("…", " (loading)"),
-        PlaybackState::Stopped => ("■", ""),
-    };
+    let (icon, state) = state_label(status.state);
     let mut line = vec![
         Span::styled(format!(" {icon} "), Style::new().fg(ACCENT).bold()),
         Span::styled(track.title.as_str(), Style::new().bold()),
@@ -73,9 +69,33 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     }
     frame.render_widget(Line::from(line), info);
 
-    // Prefer the player's duration once the track is loaded; the API's until then.
+    frame.render_widget(
+        progress_line(status, track.duration, usize::from(progress.width)),
+        progress,
+    );
+}
+
+/// The playback state's icon and, unless it's simply playing or stopped, a note like
+/// ` (paused)`.
+pub(super) fn state_label(state: PlaybackState) -> (&'static str, &'static str) {
+    match state {
+        PlaybackState::Playing => ("▶", ""),
+        PlaybackState::Paused => ("‖", " (paused)"),
+        PlaybackState::Buffering => ("…", " (buffering)"),
+        PlaybackState::Loading => ("…", " (loading)"),
+        PlaybackState::Stopped => ("■", ""),
+    }
+}
+
+/// ` 1:12 ━━━●──── 3:51   vol  80% `, `width` cells wide. `api_duration` is used until the
+/// player knows the track's real length.
+pub(super) fn progress_line(
+    status: &Status,
+    api_duration: Duration,
+    width: usize,
+) -> Line<'static> {
     let duration = if status.duration.is_zero() {
-        track.duration
+        api_duration
     } else {
         status.duration
     };
@@ -85,20 +105,17 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         format::clock(duration),
         volume_percent(status.volume)
     );
-    let bar_width = usize::from(progress.width).saturating_sub(left.len() + right.len());
+    let bar_width = width.saturating_sub(left.len() + right.len());
     let ratio = if duration.is_zero() {
         0.0
     } else {
         (status.position.as_secs_f64() / duration.as_secs_f64()).clamp(0.0, 1.0)
     };
-    frame.render_widget(
-        Line::from(vec![
-            Span::raw(left),
-            progress_bar(bar_width, ratio),
-            Span::styled(right, Style::new().dim()),
-        ]),
-        progress,
-    );
+    Line::from(vec![
+        Span::raw(left),
+        progress_bar(bar_width, ratio),
+        Span::styled(right, Style::new().dim()),
+    ])
 }
 
 fn volume_percent(volume: f32) -> u8 {

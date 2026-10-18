@@ -43,6 +43,10 @@ pub struct Services {
     pub art_note: Option<&'static str>,
     /// Start with autoplay on (from `config.toml`).
     pub autoplay: bool,
+    /// Switch to the listening view when the queue starts a release (from `config.toml`).
+    pub listen_on_queue: bool,
+    /// Browsing or the listening view, as last time.
+    pub screen: crate::app::Screen,
     /// The saved play queue (restored without starting playback).
     pub queue: Vec<crate::queue::QueueEntry>,
 }
@@ -52,6 +56,21 @@ impl std::fmt::Debug for Services {
         f.debug_struct("Services")
             .field("player", &self.player.is_some())
             .finish_non_exhaustive()
+    }
+}
+
+/// Which key bindings apply: the topmost popup's, else the screen's.
+fn input_mode(app: &App) -> input::Mode {
+    if app.show_help {
+        input::Mode::Help
+    } else if app.picker.is_some() || app.search_open {
+        input::Mode::Picker
+    } else if app.queue_view.is_some() {
+        input::Mode::Queue
+    } else if app.screen == crate::app::Screen::Listening {
+        input::Mode::Listening
+    } else {
+        input::Mode::Normal
     }
 }
 
@@ -69,6 +88,8 @@ pub async fn run(
         art,
         art_note,
         autoplay,
+        listen_on_queue,
+        screen,
         queue,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
@@ -79,6 +100,8 @@ pub async fn run(
         app.art_font = picker.font_size();
     }
     app.autoplay = autoplay;
+    app.listen_on_queue = listen_on_queue;
+    app.screen = screen;
     app.queue = crate::queue::Queue::from_saved(queue);
     if let Some(note) = art_note {
         app.update(Action::Notice(note.to_owned()));
@@ -109,18 +132,7 @@ pub async fn run(
         }
         let action = tokio::select! {
             event = input.next() => match event {
-                Some(Ok(Event::Key(key))) => {
-                    let mode = if app.show_help {
-                        input::Mode::Help
-                    } else if app.picker.is_some() || app.search_open {
-                        input::Mode::Picker
-                    } else if app.queue_view.is_some() {
-                        input::Mode::Queue
-                    } else {
-                        input::Mode::Normal
-                    };
-                    input::action_for(key, mode)
-                }
+                Some(Ok(Event::Key(key))) => input::action_for(key, input_mode(&app)),
                 Some(Ok(Event::Resize(..))) => Some(Action::Resize),
                 Some(Ok(_)) => None,
                 Some(Err(e)) => return Err(e),
