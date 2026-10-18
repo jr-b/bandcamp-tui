@@ -149,7 +149,8 @@ fn main() -> Result<()> {
         player_events,
         settings_path,
         initial_volume: settings.volume,
-        art,
+        art: art.picker,
+        art_note: art.note,
         autoplay: config.autoplay,
     };
     let result = runtime.block_on(run(&mut terminal, services, query));

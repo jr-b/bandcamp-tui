@@ -94,29 +94,84 @@ impl fmt::Debug for Art {
     }
 }
 
+/// The outcome of [`detect`].
+#[derive(Debug, Default)]
+pub struct Detection {
+    pub picker: Option<Picker>,
+    /// Why art is off despite `album_art = "on"`, for the user.
+    pub note: Option<&'static str>,
+}
+
 /// Decides whether to show art, asking the terminal if needed. Call after entering the
 /// alternate screen and before reading input events: the query reads the terminal's reply
 /// from stdin.
 #[must_use]
-pub fn detect(mode: AlbumArt) -> Option<Picker> {
+pub fn detect(mode: AlbumArt) -> Detection {
     let in_tmux = std::env::var_os("TMUX").is_some_and(|v| !v.is_empty());
     if !should_query(mode, in_tmux) {
         tracing::info!(?mode, in_tmux, "album art disabled");
-        return None;
+        return Detection::default();
     }
-    let mut picker = match Picker::from_query_stdio() {
-        Ok(picker) => picker,
-        Err(e) => {
-            tracing::info!(error = %e, "terminal graphics query failed; album art disabled");
-            return None;
+    // Inside tmux, both the images and the capability query reach the real terminal only
+    // through passthrough. Without it the query is never answered (see below), and images
+    // couldn't be shown anyway.
+    if in_tmux && !tmux_passthrough_enabled() {
+        tracing::info!("tmux allow-passthrough is off; album art disabled");
+        return Detection {
+            picker: None,
+            note: Some("Cover art in tmux needs `set -g allow-passthrough on` in ~/.tmux.conf."),
+        };
+    }
+    Detection {
+        picker: query_picker(mode),
+        note: None,
+    }
+}
+
+fn query_picker(mode: AlbumArt) -> Option<Picker> {
+    // ratatui-image 11 reads the reply on a helper thread; if the terminal never answers,
+    // that thread stays blocked reading stdin and swallows every key typed afterwards. So
+    // first check, through crossterm's own input reader (which the app keeps using), that the
+    // terminal answers queries at all. (Fixed upstream in ratatui-image 12; drop this then.)
+    let answers = crossterm::terminal::supports_keyboard_enhancement().is_ok();
+    let mut picker = if answers {
+        match Picker::from_query_stdio() {
+            Ok(picker) => picker,
+            Err(e) => {
+                tracing::info!(error = %e, "terminal graphics query failed; album art disabled");
+                return None;
+            }
         }
+    } else if mode == AlbumArt::On {
+        // No answer, but `on` trusts the environment. This picker has ratatui-image's default
+        // 10×20 cell size; its protocol is replaced below.
+        tracing::info!("terminal doesn't answer queries; using environment hints");
+        Picker::halfblocks()
+    } else {
+        tracing::info!("terminal doesn't answer queries; album art disabled");
+        return None;
     };
-    let detected = picker.protocol_type();
+    let detected = if answers {
+        picker.protocol_type()
+    } else {
+        ProtocolType::Halfblocks
+    };
     let chosen = choose_protocol(mode, detected, protocol_from_env());
     tracing::info!(?detected, ?chosen, "album art");
     let protocol = chosen?;
     picker.set_protocol_type(protocol);
     Some(picker)
+}
+
+/// Whether tmux forwards escape sequences to the outer terminal for this pane.
+fn tmux_passthrough_enabled() -> bool {
+    std::process::Command::new("tmux")
+        .args(["show-options", "-Apv", "allow-passthrough"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .is_some_and(|out| matches!(String::from_utf8_lossy(&out.stdout).trim(), "on" | "all"))
 }
 
 /// `auto` never tries inside tmux (passthrough is often off and detection unreliable).

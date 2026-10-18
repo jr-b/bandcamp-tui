@@ -39,6 +39,8 @@ pub struct Services {
     pub initial_volume: f32,
     /// Set if the terminal shows cover art (see [`crate::art::detect`]).
     pub art: Option<ratatui_image::picker::Picker>,
+    /// Shown at startup when art was requested but can't work (e.g. tmux passthrough off).
+    pub art_note: Option<&'static str>,
     /// Start with autoplay on (from `config.toml`).
     pub autoplay: bool,
 }
@@ -63,6 +65,7 @@ pub async fn run(
         settings_path,
         initial_volume,
         art,
+        art_note,
         autoplay,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
@@ -73,6 +76,9 @@ pub async fn run(
         app.art_font = picker.font_size();
     }
     app.autoplay = autoplay;
+    if let Some(note) = art_note {
+        app.update(Action::Notice(note.to_owned()));
+    }
     let executor = Executor {
         client,
         player: player.clone(),
