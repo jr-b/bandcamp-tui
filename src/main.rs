@@ -152,6 +152,8 @@ fn main() -> Result<()> {
         art: art.picker,
         art_note: art.note,
         autoplay: config.autoplay,
+        listen_on_queue: config.listen_on_queue,
+        screen: settings.screen,
         queue: settings.queue.clone(),
     };
     let result = runtime.block_on(run(&mut terminal, services, query));

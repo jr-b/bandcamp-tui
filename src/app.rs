@@ -55,6 +55,8 @@ pub enum Action {
     FocusAlbum,
     /// Album pane: switch between the tracklist and the about/credits/bio text.
     ToggleInfo,
+    /// Switch between browsing and the listening view (`v`).
+    ToggleListening,
     /// Continue with the next Discover release when an album ends.
     ToggleAutoplay,
     /// Open the search box (`/`).
@@ -189,11 +191,33 @@ pub enum PlayerCommand {
     SetVolume(f32),
 }
 
+/// What the body of the screen shows. Remembered between runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Screen {
+    /// The release list and the album pane.
+    #[default]
+    Browse,
+    /// Only what's playing: a large cover, the track and the progress.
+    Listening,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
     #[default]
     Discover,
     Album,
+}
+
+/// What [`App::plays_next`] found.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UpNext<'a> {
+    /// The next track of the album playing.
+    Track(&'a crate::bandcamp::Track),
+    /// A queue entry, and how many more follow it.
+    Queue(&'a QueueEntry, usize),
+    /// Autoplay picks the next Discover release.
+    Autoplay,
 }
 
 /// The discover feed as loaded so far.
@@ -310,7 +334,12 @@ pub struct App {
     /// Rows visible in the discover table, set while rendering; used for page up/down.
     pub page_rows: usize,
     pub focus: Focus,
+    pub screen: Screen,
+    /// Switch to the listening view whenever the queue starts a release (`config.toml`).
+    pub listen_on_queue: bool,
     pub album_pane: AlbumPane,
+    /// Where the listening view's cover fits, set while rendering (`None`: text only).
+    pub listening_art_box: Option<ArtBox>,
     /// Open filter popup, if any. While open it gets all keys.
     pub picker: Option<Picker>,
     albums: Lru<ItemId, Arc<Album>>,
@@ -375,7 +404,10 @@ impl App {
             table: TableState::default(),
             page_rows: 10,
             focus: Focus::Discover,
+            screen: Screen::Browse,
+            listen_on_queue: false,
             album_pane: AlbumPane::default(),
+            listening_art_box: None,
             picker: None,
             albums: Lru::new(ALBUM_CACHE_SIZE),
             art_enabled: false,
@@ -513,6 +545,13 @@ impl App {
                 self.view_update(&action);
                 vec![]
             }
+            Action::ToggleListening => {
+                self.screen = match self.screen {
+                    Screen::Browse => Screen::Listening,
+                    Screen::Listening => Screen::Browse,
+                };
+                vec![self.save_settings()]
+            }
             Action::ToggleAutoplay => self.toggle_autoplay(),
             Action::Enqueue => self.enqueue(false),
             Action::EnqueueNext => self.enqueue(true),
@@ -632,6 +671,7 @@ impl App {
     pub fn settings(&self) -> Settings {
         let mut settings = Settings::from_state(&self.query, self.player.volume);
         settings.queue = self.queue.to_saved();
+        settings.screen = self.screen;
         settings
     }
 
@@ -772,9 +812,18 @@ impl App {
         (needs_album || needs_art).then_some(Effect::DebounceAlbum(id))
     }
 
+    /// The cover box of the screen showing, as last drawn: the album pane's or the listening
+    /// view's. Only one is on screen at a time, so only that one is fetched and encoded for.
+    fn art_box(&self) -> Option<ArtBox> {
+        match self.screen {
+            Screen::Browse => self.album_pane.art_box,
+            Screen::Listening => self.listening_art_box,
+        }
+    }
+
     /// The image size needed for the cover box as last drawn.
     fn wanted_art_size(&self) -> Option<ImageSize> {
-        let art_box = self.album_pane.art_box?;
+        let art_box = self.art_box()?;
         Some(crate::art::source_size(art_box, self.art_font))
     }
 
@@ -797,7 +846,7 @@ impl App {
 
     /// Encodes cover `id` for the current box if its JPEG is here and that size isn't.
     fn encode_art(&mut self, id: ArtId) -> Option<Effect> {
-        let art_box = self.album_pane.art_box?;
+        let art_box = self.art_box()?;
         if self.arts.peek((id, art_box)).is_some() || self.art_encodes.contains(&(id, art_box)) {
             return None;
         }
@@ -810,13 +859,14 @@ impl App {
         })
     }
 
-    /// Cover art for the album pane: `None` when there's none to show (disabled, no room, no
-    /// art, or it failed), `Some(None)` while loading. While a resize re-encodes the cover, the
-    /// largest earlier encoding that still fits is shown instead of a placeholder.
+    /// Cover art for the album pane or listening view: `None` when there's none to show
+    /// (disabled, no room, no art, or it failed), `Some(None)` while loading. While a resize
+    /// re-encodes the cover, the largest earlier encoding that still fits is shown instead of a
+    /// placeholder.
     #[must_use]
     pub fn art_for(&self, id: Option<ArtId>) -> Option<Option<&Art>> {
         let id = id.filter(|_| self.art_enabled)?;
-        let art_box = self.album_pane.art_box?;
+        let art_box = self.art_box()?;
         if self.art_failed.contains(&id) {
             return None;
         }
@@ -874,11 +924,21 @@ impl App {
     }
 
     /// Called after every draw, once the layout (and so the cover box) is known. Re-encodes or
-    /// re-downloads the current cover when a resize changed the size it needs. Never starts a
-    /// first download: those go through the selection debounce.
+    /// re-downloads the current cover when a resize changed the size it needs. While browsing
+    /// it never starts a first download: those go through the selection debounce. The listening
+    /// view shows a single cover that doesn't change with scrolling, so it fetches right away.
     pub fn after_draw(&mut self) -> Vec<Effect> {
         if !self.art_enabled {
             return vec![];
+        }
+        if self.screen == Screen::Listening {
+            let Some(id) = self.now_playing.as_ref().and_then(|a| a.art_id) else {
+                return vec![];
+            };
+            return match self.fetch_art(Some(id)) {
+                Some(fetch) => vec![fetch],
+                None => self.encode_art(id).into_iter().collect(),
+            };
         }
         let id = match self.album_view() {
             AlbumView::Loaded(album) => album.art_id,
@@ -1158,6 +1218,22 @@ impl App {
         Some((front, self.queue.len() - 1))
     }
 
+    /// What plays after the current track, for the listening view: the rest of the album,
+    /// then the queue, then autoplay's next release.
+    #[must_use]
+    pub fn plays_next(&self) -> Option<UpNext<'_>> {
+        if let Some((album, index)) = self.current_track()
+            && self.now_playing_only.is_none()
+            && let Some(track) = album.tracks[index + 1..].iter().find(|t| t.is_playable())
+        {
+            return Some(UpNext::Track(track));
+        }
+        if let Some((entry, more)) = self.up_next() {
+            return Some(UpNext::Queue(entry, more));
+        }
+        self.autoplay.then_some(UpNext::Autoplay)
+    }
+
     /// `e` / `E`: queue the selected track (in the tracklist) or release.
     fn enqueue(&mut self, next: bool) -> Vec<Effect> {
         let entry = match (self.focus, self.album_view()) {
@@ -1298,8 +1374,20 @@ impl App {
             .collect()
     }
 
-    /// Plays a queue entry whose details are loaded: the whole album, or just `only`.
+    /// Plays a queue entry whose details are loaded: the whole album, or just `only`. With
+    /// `listen_on_queue`, also switches to the listening view.
     fn play_queue_entry(&mut self, album: &Arc<Album>, only: Option<usize>) -> Vec<Effect> {
+        let effects = self.play_queue_entry_now(album, only);
+        let started = effects
+            .iter()
+            .any(|e| matches!(e, Effect::Player(PlayerCommand::PlayQueue(..))));
+        if self.listen_on_queue && started {
+            self.screen = Screen::Listening;
+        }
+        effects
+    }
+
+    fn play_queue_entry_now(&mut self, album: &Arc<Album>, only: Option<usize>) -> Vec<Effect> {
         let Some(index) = only else {
             if !album.has_playable_tracks() {
                 self.error(format!("Skipped {}: nothing streamable.", album.title));
@@ -1370,6 +1458,14 @@ impl App {
     }
 
     fn open_in_browser(&mut self) -> Vec<Effect> {
+        if self.screen == Screen::Listening {
+            let Some(album) = &self.now_playing else {
+                return vec![];
+            };
+            let url = album.url.clone();
+            self.info(format!("Opening {url}"));
+            return vec![Effect::OpenUrl(url)];
+        }
         let Some(item) = self.selected() else {
             return vec![];
         };
@@ -3112,5 +3208,114 @@ mod tests {
         assert!(cache.peek(ItemId(2)).is_none());
         assert!(cache.peek(ItemId(3)).is_some());
         assert_eq!(cache.map.len(), 2);
+    }
+
+    fn playing_track(app: &mut App, index: usize) {
+        app.update(Action::Player {
+            event: None,
+            status: Status {
+                state: PlaybackState::Playing,
+                index: Some(index),
+                ..Status::default()
+            },
+        });
+    }
+
+    #[test]
+    fn listening_view_toggles_keeps_focus_and_is_saved() {
+        let mut app = with_album();
+        app.update(Action::FocusAlbum);
+        let effects = app.update(Action::ToggleListening);
+        assert_eq!(app.screen, Screen::Listening);
+        assert!(
+            matches!(&effects[..], [Effect::SaveSettings(s)] if s.screen == Screen::Listening),
+            "{effects:?}"
+        );
+        app.update(Action::ToggleListening);
+        assert_eq!(app.screen, Screen::Browse);
+        assert_eq!(app.focus, Focus::Album, "focus survives the round trip");
+    }
+
+    #[test]
+    fn listening_view_fetches_the_playing_cover_not_the_selected_one() {
+        let mut app = playing_first();
+        let playing_art = app.now_playing.as_ref().unwrap().art_id.unwrap();
+        app.update(Action::Down);
+        assert_ne!(app.selected().unwrap().art_id, Some(playing_art));
+        app.art_enabled = true;
+        app.album_pane.art_box = Some(SMALL_BOX);
+        app.update(Action::ToggleListening);
+        app.listening_art_box = Some(BIG_BOX);
+
+        // No debounce: the first draw fetches it, at the listening view's size.
+        let effects = app.after_draw();
+        let wanted = crate::art::source_size(BIG_BOX, app.art_font);
+        assert!(
+            matches!(&effects[..], [Effect::FetchArt { id, size }] if *id == playing_art && *size == wanted),
+            "{effects:?}"
+        );
+        assert_eq!(app.after_draw(), [], "already in flight");
+
+        let effects = app.update(Action::ArtFetched {
+            id: playing_art,
+            size: wanted,
+            result: Ok(bytes::Bytes::from(crate::art::tests::test_jpeg())),
+        });
+        assert!(
+            matches!(&effects[..], [Effect::EncodeArt { id, art_box, .. }] if *id == playing_art && *art_box == BIG_BOX),
+            "{effects:?}"
+        );
+        app.update(Action::ArtEncoded {
+            id: playing_art,
+            art_box: BIG_BOX,
+            result: Ok(encoded(BIG_BOX)),
+        });
+        assert!(matches!(app.art_for(Some(playing_art)), Some(Some(_))));
+        assert_eq!(app.after_draw(), []);
+    }
+
+    #[test]
+    fn plays_next_walks_the_album_then_the_queue_then_autoplay() {
+        let mut app = playing_first();
+        playing_track(&mut app, 0);
+        let second_title = app.now_playing.as_ref().unwrap().tracks[1].title.clone();
+        assert!(matches!(app.plays_next(), Some(UpNext::Track(t)) if t.title == second_title));
+
+        let last = app.now_playing.as_ref().unwrap().tracks.len() - 1;
+        playing_track(&mut app, last);
+        assert_eq!(app.plays_next(), Some(UpNext::Autoplay));
+        app.autoplay = false;
+        assert_eq!(app.plays_next(), None);
+
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        assert!(matches!(app.plays_next(), Some(UpNext::Queue(_, 0))));
+    }
+
+    #[test]
+    fn listen_on_queue_switches_when_the_queue_starts_a_release() {
+        for listen in [false, true] {
+            let mut app = playing_first();
+            app.listen_on_queue = listen;
+            app.update(Action::Enqueue);
+            queue_ended(&mut app);
+            let expected = if listen {
+                Screen::Listening
+            } else {
+                Screen::Browse
+            };
+            assert_eq!(app.screen, expected, "listen_on_queue = {listen}");
+        }
+    }
+
+    #[test]
+    fn open_in_browser_in_the_listening_view_opens_what_is_playing() {
+        let mut app = playing_first();
+        let playing_url = app.now_playing.as_ref().unwrap().url.clone();
+        app.update(Action::Down);
+        app.update(Action::ToggleListening);
+        assert!(
+            matches!(&app.update(Action::OpenInBrowser)[..], [Effect::OpenUrl(u)] if *u == playing_url)
+        );
     }
 }
