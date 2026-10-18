@@ -545,7 +545,7 @@ mod tests {
         });
 
         render(&mut app, 100, 40);
-        let art_box = app.listening_art_box.expect("room for a cover");
+        let art_box = app.listening.art_box.expect("room for a cover");
         assert!(art_box.rows >= 24, "{art_box:?}");
         let art_id = app.now_playing.as_ref().unwrap().art_id.unwrap();
         let art = crate::art::encode(
@@ -565,6 +565,26 @@ mod tests {
         assert!(text.contains("(paused)"), "{text}");
         assert!(text.contains("(+1 queued)"), "{text}");
         insta::assert_snapshot!(terminal.backend());
+    }
+
+    #[test]
+    fn listening_view_info() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleInfo);
+        let terminal = render(&mut app, 100, 30);
+        assert_eq!(app.listening.art_box, None, "no cover behind the text");
+        let text = format!("{}", terminal.backend());
+        assert!(text.contains("i cover"), "{text}");
+        assert!(text.contains("About") && text.contains("Artist"), "{text}");
+        insta::assert_snapshot!(terminal.backend());
+
+        // Scrolled past the end in a short terminal: clamped to the text.
+        app.update(Action::Bottom);
+        render(&mut app, 100, 16);
+        let scroll = app.listening.info_scroll;
+        assert!(scroll > 0 && scroll < u16::MAX, "{scroll}");
     }
 
     #[test]

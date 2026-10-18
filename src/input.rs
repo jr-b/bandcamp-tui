@@ -42,6 +42,7 @@ pub const QUEUE_HINTS: &[(&str, &str)] = &[
 pub const LISTENING_HINTS: &[(&str, &str)] = &[
     ("space", "pause"),
     ("v", "browse"),
+    ("i", "info"),
     ("n/p", "track"),
     ("←→", "seek"),
     ("+/-", "volume"),
@@ -70,7 +71,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("g G  Home End", "top / bottom"),
             ("PgUp PgDn  ^u ^d", "page"),
             ("tab  h l", "switch pane"),
-            ("i", "album about / credits / artist"),
+            ("i", "album about / credits / artist (also while listening)"),
             ("o", "open on bandcamp.com"),
         ],
     ),
@@ -212,6 +213,16 @@ fn listening_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Char('c') if ctrl => Action::Quit,
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('v') | KeyCode::Esc => Action::ToggleListening,
+        KeyCode::Char('i') => Action::ToggleInfo,
+        // Scroll the info text.
+        KeyCode::Char('d') if ctrl => Action::PageDown,
+        KeyCode::Char('u') if ctrl => Action::PageUp,
+        KeyCode::Char('k') | KeyCode::Up => Action::Up,
+        KeyCode::Char('j') | KeyCode::Down => Action::Down,
+        KeyCode::PageUp => Action::PageUp,
+        KeyCode::PageDown => Action::PageDown,
+        KeyCode::Char('g') | KeyCode::Home => Action::Top,
+        KeyCode::Char('G') | KeyCode::End => Action::Bottom,
         KeyCode::Char(' ') => Action::TogglePause,
         KeyCode::Char('n') => Action::NextTrack,
         KeyCode::Char('p') => Action::PreviousTrack,
@@ -350,9 +361,15 @@ mod tests {
         assert_eq!(listen(KeyCode::Right), Some(Action::SeekForward));
         assert_eq!(listen(KeyCode::Char('u')), Some(Action::OpenQueue));
         assert_eq!(listen(KeyCode::Char('q')), Some(Action::Quit));
+        assert_eq!(listen(KeyCode::Char('i')), Some(Action::ToggleInfo));
+        assert_eq!(
+            listen(KeyCode::Char('j')),
+            Some(Action::Down),
+            "scrolls the info"
+        );
         // Browsing keys do nothing: there's no list here.
-        assert_eq!(listen(KeyCode::Char('j')), None);
         assert_eq!(listen(KeyCode::Enter), None);
+        assert_eq!(listen(KeyCode::Char('f')), None);
         assert_eq!(listen(KeyCode::Char('/')), None);
     }
 

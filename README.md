@@ -55,7 +55,7 @@ bandcamp-tui --fresh               # ignore remembered filters and volume
 | `e` / `E` | add the release (or, in the tracklist, the track) to the queue / play it next |
 | `u` | the queue: `⏎` play now, `d` remove, `K`/`J` move, `c` clear |
 | `a` | autoplay on/off (continue with the next release when the queue runs out) |
-| `v` | listening view: only what's playing, with a large cover (`v` or `esc` to go back) |
+| `v` | listening view: only what's playing, with a large cover; `i` shows the album's about / credits / artist (`v` or `esc` to go back) |
 | `tab`, `h` / `l` | switch pane |
 | `i` | album about / credits / artist bio |
 | `o` | open the release on bandcamp.com (to buy it) |
