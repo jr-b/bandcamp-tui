@@ -1,4 +1,4 @@
-# bandcamp-discover-tui
+# bandcamp-tui
 
 A terminal player for [Bandcamp Discover](https://bandcamp.com/discover/) that streams full albums. No account needed.
 
