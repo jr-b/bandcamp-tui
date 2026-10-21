@@ -1,6 +1,6 @@
 //! Client for Bandcamp's (unofficial, undocumented) web and mobile APIs.
 //!
-//! Every endpoint used here works without logging in. See `PLAN.md` §1 for how they were found.
+//! Every endpoint used here works without logging in.
 
 mod album;
 mod discover;
