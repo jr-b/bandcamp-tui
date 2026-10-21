@@ -117,10 +117,10 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, view: &mut HelpView) {
     let max_scroll = text_rows.saturating_sub(text.height);
     view.scroll = view.scroll.min(max_scroll);
     let hint_text = if max_scroll == 0 {
-        "Any key closes this.".to_owned()
+        "esc closes this.".to_owned()
     } else {
         let shown = (text.height + view.scroll).min(text_rows);
-        format!("↑↓ scroll ({shown}/{text_rows})  any other key closes")
+        format!("↑↓ scroll ({shown}/{text_rows})  esc closes")
     };
     frame.render_widget(Line::from(hint_text).dim(), hint);
 

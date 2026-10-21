@@ -127,7 +127,7 @@ pub enum Mode {
     Normal,
     /// A filter picker or the search box is open: letters are text.
     Picker,
-    /// The help overlay is open: any key closes it.
+    /// The help overlay is open: movement keys scroll it, any other key closes it.
     Help,
     /// The queue popup is open.
     Queue,
