@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 use super::pane;
 use super::theme::theme;
@@ -83,7 +84,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
                 Span::styled(TAG, theme().warning),
                 Span::raw(format::truncate(
                     &item.title,
-                    title_width.saturating_sub(TAG.len()),
+                    title_width.saturating_sub(TAG.width()),
                 )),
             ])
         } else {

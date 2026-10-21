@@ -7,6 +7,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
+use unicode_width::UnicodeWidthStr;
 
 use super::theme::theme;
 use crate::app::App;
@@ -105,7 +106,7 @@ pub(super) fn progress_line(
         format::clock(duration),
         volume_percent(status.volume)
     );
-    let bar_width = width.saturating_sub(left.len() + right.len());
+    let bar_width = width.saturating_sub(left.width() + right.width());
     let ratio = if duration.is_zero() {
         0.0
     } else {

@@ -16,6 +16,7 @@ use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
@@ -112,7 +113,7 @@ fn draw_too_small(frame: &mut Frame, area: Rect) {
 fn draw_input(frame: &mut Frame, area: Rect, input: &TextInput, placeholder: &str) {
     const PROMPT: &str = "› ";
     let prompt = Span::styled(PROMPT, theme().accent);
-    let room = usize::from(area.width).saturating_sub(PROMPT.chars().count());
+    let room = usize::from(area.width).saturating_sub(PROMPT.width());
     let (line, column) = if input.is_empty() {
         let hint = Span::styled(placeholder.to_owned(), Style::new().dim());
         (Line::from(vec![prompt, hint]), 0)
@@ -121,7 +122,7 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &TextInput, placeholder: &st
         (Line::from(vec![prompt, Span::raw(text.to_owned())]), column)
     };
     frame.render_widget(line, area);
-    let column = u16::try_from(column + PROMPT.chars().count()).unwrap_or(u16::MAX);
+    let column = u16::try_from(column + PROMPT.width()).unwrap_or(u16::MAX);
     if column < area.width {
         frame.set_cursor_position((area.x + column, area.y));
     }
@@ -232,7 +233,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             let mut used = 1;
             for (i, (keys, what)) in hints.iter().enumerate() {
                 let gap = if i > 0 { 2 } else { 0 };
-                let width = gap + keys.chars().count() + 1 + what.len();
+                let width = gap + keys.width() + 1 + what.width();
                 if used + width > usize::from(area.width) {
                     break;
                 }

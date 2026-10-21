@@ -5,6 +5,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use super::now_playing::{progress_line, state_label};
 use super::pane;
@@ -201,7 +202,7 @@ fn up_next_line(next: UpNext<'_>, width: usize) -> Line<'static> {
         ),
         UpNext::Autoplay => ("next Discover release (autoplay)".to_owned(), String::new()),
     };
-    let label = format::truncate(&label, width.saturating_sub(6 + more.len())).into_owned();
+    let label = format::truncate(&label, width.saturating_sub(6 + more.width())).into_owned();
     Line::from(vec![
         Span::styled("next: ", Style::new().dim()),
         Span::raw(label),
