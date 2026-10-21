@@ -61,7 +61,7 @@ impl std::fmt::Debug for Services {
 
 /// Which key bindings apply: the topmost popup's, else the screen's.
 fn input_mode(app: &App) -> input::Mode {
-    if app.show_help {
+    if app.help.is_some() {
         input::Mode::Help
     } else if app.picker.is_some() || app.search_open {
         input::Mode::Picker

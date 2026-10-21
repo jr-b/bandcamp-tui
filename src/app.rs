@@ -300,6 +300,15 @@ pub struct AlbumPane {
     pub art_box: Option<ArtBox>,
 }
 
+/// State of the `?` help overlay.
+#[derive(Debug, Default)]
+pub struct HelpView {
+    /// Lines scrolled off the top; rendering clamps it to the text height.
+    pub scroll: u16,
+    /// Rows of help visible, set while rendering; used for page up/down.
+    pub page_rows: usize,
+}
+
 /// State of the listening view.
 #[derive(Debug, Default)]
 pub struct ListeningPane {
@@ -398,7 +407,8 @@ pub struct App {
     pub player_available: bool,
     pub message: Option<Message>,
     pub should_quit: bool,
-    pub show_help: bool,
+    /// The help overlay, if open.
+    pub help: Option<HelpView>,
 }
 
 impl App {
@@ -447,7 +457,7 @@ impl App {
             player_available,
             message: None,
             should_quit: false,
-            show_help: false,
+            help: None,
         };
         if !player_available {
             app.error("No audio output available; browsing only.");
@@ -520,19 +530,7 @@ impl App {
         if action.is_user_input() {
             self.message = None;
         }
-        if self.picker.is_some()
-            && let Some(effects) = self.picker_update(&action)
-        {
-            return effects;
-        }
-        if self.search_open
-            && let Some(effects) = self.search_update(&action)
-        {
-            return effects;
-        }
-        if self.queue_view.is_some()
-            && let Some(effects) = self.queue_update(&action)
-        {
+        if let Some(effects) = self.popup_update(&action) {
             return effects;
         }
         match action {
@@ -553,8 +551,7 @@ impl App {
             Action::ToggleFocus
             | Action::FocusDiscover
             | Action::FocusAlbum
-            | Action::ToggleInfo
-            | Action::CloseHelp => {
+            | Action::ToggleInfo => {
                 self.view_update(&action);
                 vec![]
             }
@@ -596,6 +593,7 @@ impl App {
             // Picker keys with no picker open (handled above when one is), and resizes, which
             // only need a redraw.
             Action::ClosePopup
+            | Action::CloseHelp
             | Action::TypeChar(_)
             | Action::Backspace
             | Action::ClearInput
@@ -615,6 +613,23 @@ impl App {
             | Action::SearchLoaded { .. }
             | Action::ArtistLoaded { .. }) => self.background_update(other),
         }
+    }
+
+    /// The open popup handles `action` first; `None` means no popup took it.
+    fn popup_update(&mut self, action: &Action) -> Option<Vec<Effect>> {
+        if self.help.is_some() {
+            return self.help_update(action);
+        }
+        if self.picker.is_some() {
+            return self.picker_update(action);
+        }
+        if self.search_open {
+            return self.search_update(action);
+        }
+        if self.queue_view.is_some() {
+            return self.queue_update(action);
+        }
+        None
     }
 
     /// Results arriving from the network, the image encoder and the player.
@@ -641,6 +656,26 @@ impl App {
             Action::ArtistLoaded { band_id, result } => self.artist_loaded(band_id, result),
             _ => vec![],
         }
+    }
+
+    /// Handles `action` while the help overlay is open; `None` means "handle normally".
+    fn help_update(&mut self, action: &Action) -> Option<Vec<Effect>> {
+        let help = self.help.as_mut()?;
+        let page = page(help.page_rows);
+        match action {
+            Action::Up => help.scroll = scrolled(help.scroll, -1),
+            Action::Down => help.scroll = scrolled(help.scroll, 1),
+            Action::PageUp => help.scroll = scrolled(help.scroll, -page),
+            Action::PageDown => help.scroll = scrolled(help.scroll, page),
+            Action::Top => help.scroll = 0,
+            // Rendering clamps it to the last screenful.
+            Action::Bottom => help.scroll = u16::MAX,
+            Action::CloseHelp => self.help = None,
+            Action::Quit => return None,
+            _ if action.is_user_input() => {}
+            _ => return None,
+        }
+        Some(vec![])
     }
 
     // ---- Filters -------------------------------------------------------------------------------
@@ -1201,7 +1236,7 @@ impl App {
 
     // ---- Queue ---------------------------------------------------------------------------------
 
-    /// Focus, the info view and the help overlay: view state only, never any effects.
+    /// Focus and the info view: view state only, never any effects.
     fn view_update(&mut self, action: &Action) {
         match action {
             Action::ToggleFocus => {
@@ -1220,7 +1255,6 @@ impl App {
                 self.album_pane.show_info = !self.album_pane.show_info;
                 self.album_pane.info_scroll = 0;
             }
-            Action::CloseHelp => self.show_help = false,
             _ => {}
         }
     }
@@ -1229,7 +1263,7 @@ impl App {
         match popup {
             Popup::Queue => self.queue_view = Some(ListState::default().with_selected(Some(0))),
             Popup::Search => self.search_open = true,
-            Popup::Help => self.show_help = true,
+            Popup::Help => self.help = Some(HelpView::default()),
         }
         vec![]
     }

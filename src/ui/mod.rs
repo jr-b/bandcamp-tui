@@ -19,7 +19,7 @@ use ratatui::widgets::{Block, Paragraph};
 use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
 use crate::format;
-use crate::input::{HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
+use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
 
 const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
@@ -68,8 +68,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.queue_view.is_some() {
         queue::draw(frame, body, app);
     }
-    if app.show_help {
-        help::draw(frame, frame.area());
+    if let Some(view) = app.help.as_mut() {
+        help::draw(frame, frame.area(), view);
     }
 }
 
@@ -142,7 +142,9 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
         Some(m) => Line::from(format!(" {}", m.text)).fg(ACCENT),
         None => {
             // Show as many whole hints as fit; they're ordered by importance.
-            let hints = if app.picker.is_some() || app.search_open {
+            let hints = if app.help.is_some() {
+                HELP_HINTS
+            } else if app.picker.is_some() || app.search_open {
                 PICKER_HINTS
             } else if app.queue_view.is_some() {
                 QUEUE_HINTS
@@ -487,6 +489,25 @@ mod tests {
         let mut app = app_with_page();
         app.update(Action::ShowHelp);
         insta::assert_snapshot!(render(&mut app, 100, 36).backend());
+    }
+
+    #[test]
+    fn help_scrolls_at_80x24() {
+        let mut app = app_with_page();
+        app.update(Action::ShowHelp);
+        insta::assert_snapshot!("help_80x24_top", render(&mut app, 80, 24).backend());
+        app.update(Action::Bottom);
+        insta::assert_snapshot!("help_80x24_bottom", render(&mut app, 80, 24).backend());
+        assert!(app.help.is_some(), "scrolling keeps help open");
+        app.update(Action::CloseHelp);
+        assert!(app.help.is_none());
+    }
+
+    #[test]
+    fn help_uses_two_columns_when_wide() {
+        let mut app = app_with_page();
+        app.update(Action::ShowHelp);
+        insta::assert_snapshot!(render(&mut app, 140, 30).backend());
     }
 
     fn listening_to_joyride(app: &mut App, state: PlaybackState) {

@@ -53,6 +53,9 @@ pub const LISTENING_HINTS: &[(&str, &str)] = &[
     ("q", "quit"),
 ];
 
+/// Hints shown while the help overlay is open.
+pub const HELP_HINTS: &[(&str, &str)] = &[("↑↓", "scroll"), ("esc", "close")];
+
 /// Hints shown while a picker is open.
 pub const PICKER_HINTS: &[(&str, &str)] = &[
     ("type", "to search"),
@@ -71,7 +74,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("g G  Home End", "top / bottom"),
             ("PgUp PgDn  ^u ^d", "page"),
             ("tab  h l", "switch pane"),
-            ("i", "album about / credits / artist (also while listening)"),
+            ("i", "about / credits / artist bio"),
             ("o", "open on bandcamp.com"),
         ],
     ),
@@ -83,16 +86,17 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("n p", "next / previous track"),
             ("← →  , .", "seek 10 s"),
             ("+ -", "volume"),
-            ("a", "autoplay: continue with the next release"),
-            ("v", "listening view: big cover, back to browse"),
+            ("a", "autoplay the next release"),
+            ("v", "listening view (big cover)"),
         ],
     ),
     (
         "Queue",
         &[
-            ("e", "add release (or track, in the tracklist)"),
+            ("e", "queue release (track in tracklist)"),
             ("E", "play next"),
-            ("u", "show queue: ⏎ play  d remove  K J move  c clear"),
+            ("u", "show the queue"),
+            ("⏎ d K J c", "in the queue: play, remove, move, clear"),
         ],
     ),
     (
@@ -134,8 +138,7 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match mode {
         Mode::Picker => return picker_action(key),
-        Mode::Help if ctrl && key.code == KeyCode::Char('c') => return Some(Action::Quit),
-        Mode::Help => return Some(Action::CloseHelp),
+        Mode::Help => return Some(help_action(key)),
         Mode::Queue => return queue_action(key),
         Mode::Listening => return listening_action(key),
         Mode::Normal => {}
@@ -180,6 +183,23 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         _ => return None,
     };
     Some(action)
+}
+
+/// The help overlay: movement keys scroll it, any other key closes it.
+fn help_action(key: KeyEvent) -> Action {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('c') if ctrl => Action::Quit,
+        KeyCode::Char('d') if ctrl => Action::PageDown,
+        KeyCode::Char('u') if ctrl => Action::PageUp,
+        KeyCode::Char('k') | KeyCode::Up => Action::Up,
+        KeyCode::Char('j') | KeyCode::Down => Action::Down,
+        KeyCode::PageUp => Action::PageUp,
+        KeyCode::PageDown => Action::PageDown,
+        KeyCode::Char('g') | KeyCode::Home => Action::Top,
+        KeyCode::Char('G') | KeyCode::End => Action::Bottom,
+        _ => Action::CloseHelp,
+    }
 }
 
 fn queue_action(key: KeyEvent) -> Option<Action> {
@@ -314,10 +334,14 @@ mod tests {
     }
 
     #[test]
-    fn help_closes_on_any_key() {
+    fn help_scrolls_and_closes_on_any_other_key() {
         let help = |code| action_for(KeyEvent::new(code, KeyModifiers::NONE), Mode::Help);
         assert_eq!(help(KeyCode::Char('q')), Some(Action::CloseHelp));
         assert_eq!(help(KeyCode::Esc), Some(Action::CloseHelp));
+        assert_eq!(help(KeyCode::Char('?')), Some(Action::CloseHelp));
+        assert_eq!(help(KeyCode::Char('j')), Some(Action::Down));
+        assert_eq!(help(KeyCode::Up), Some(Action::Up));
+        assert_eq!(help(KeyCode::PageDown), Some(Action::PageDown));
         assert_eq!(press(KeyCode::Char('?')), Some(Action::ShowHelp));
     }
 
