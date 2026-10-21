@@ -170,6 +170,16 @@ fn init_logging(path: Option<PathBuf>, data_dir: Option<&std::path::Path>) -> Re
         std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
         dir.join("bandcamp-tui.log")
     };
+    // Keep the previous session's log (e.g. a crash to report) as `<name>.1`.
+    let previous = path.with_file_name(format!(
+        "{}.1",
+        path.file_name()
+            .map_or_else(Default::default, |n| n.to_string_lossy())
+    ));
+    let rotated = match std::fs::rename(&path, &previous) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    };
     let file = File::create(&path).wrap_err_with(|| format!("creating {}", path.display()))?;
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("bandcamp_tui=info,symphonia=error,warn"));
@@ -179,5 +189,8 @@ fn init_logging(path: Option<PathBuf>, data_dir: Option<&std::path::Path>) -> Re
         .with_ansi(false)
         .init();
     tracing::info!(path = %path.display(), "logging started");
+    if let Err(e) = rotated {
+        tracing::warn!(path = %previous.display(), error = %e, "couldn't keep the previous log");
+    }
     Ok(())
 }
