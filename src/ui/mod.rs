@@ -416,7 +416,10 @@ mod tests {
         });
         let terminal = render(&mut app, 100, 16);
         let text = format!("{}", terminal.backend());
-        assert!(text.contains("‖ Joyride — Ocean Company"), "{text}");
+        assert!(
+            text.contains("‖ Joyride (paused) — Ocean Company"),
+            "{text}"
+        );
         assert!(text.contains("1:12 ━━"), "{text}");
         assert!(text.contains("3:51   vol  80%"), "{text}");
     }
@@ -803,6 +806,44 @@ mod tests {
             },
         });
         app.update(Action::ToggleListening);
+    }
+
+    /// The sizes every layout must work at: the common terminal, a tmux split, the minimum.
+    const CONTRACT_SIZES: [(u16, u16); 3] = [(80, 24), (60, 20), (MIN_WIDTH, MIN_HEIGHT)];
+
+    #[test]
+    fn contract_sizes() {
+        for (width, height) in CONTRACT_SIZES {
+            let size = format!("{width}x{height}");
+            let mut app = app_with_page();
+            listening_to_joyride(&mut app, PlaybackState::Playing);
+            app.update(Action::ToggleListening);
+            insta::assert_snapshot!(
+                format!("browse_playing_{size}"),
+                render(&mut app, width, height).backend()
+            );
+
+            app.update(Action::Enqueue);
+            app.update(Action::OpenQueue);
+            insta::assert_snapshot!(
+                format!("queue_{size}"),
+                render(&mut app, width, height).backend()
+            );
+            app.update(Action::ClosePopup);
+
+            app.update(Action::OpenSearch);
+            insta::assert_snapshot!(
+                format!("search_{size}"),
+                render(&mut app, width, height).backend()
+            );
+            app.update(Action::ClosePopup);
+
+            app.update(Action::ToggleListening);
+            insta::assert_snapshot!(
+                format!("listening_{size}"),
+                render(&mut app, width, height).backend()
+            );
+        }
     }
 
     #[test]

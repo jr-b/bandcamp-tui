@@ -15,6 +15,7 @@ use crate::format;
 use crate::player::{PlaybackState, Status};
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
+    const TITLE: &str = " Now playing ";
     let mut right = Vec::new();
     if let Some((next, more)) = app.up_next() {
         let more = if more > 0 {
@@ -27,14 +28,20 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         right.push(Span::raw(label));
         right.push(Span::styled(format!("{more} ·"), Style::new().dim()));
     }
-    right.push(if app.autoplay {
+    let autoplay = if app.autoplay {
         Span::styled(" autoplay on ", theme().accent)
     } else {
         Span::styled(" autoplay off ", Style::new().dim())
-    });
+    };
+    // Up next goes first when the titles would touch: autoplay is a mode, always shown.
+    let room = usize::from(area.width).saturating_sub(TITLE.width() + 2);
+    if Line::from(right.clone()).width() + autoplay.width() > room {
+        right.clear();
+    }
+    right.push(autoplay);
     let block = Block::new()
         .borders(Borders::TOP)
-        .title(" Now playing ")
+        .title(TITLE)
         .title(Line::from(right).right_aligned())
         .border_style(Style::new().dim());
     let inner = block.inner(area);
@@ -59,21 +66,20 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     };
     let track = &album.tracks[index];
     let (icon, state) = state_label(status.state);
-    let mut line = vec![
+    // Most important first, so a narrow bar cuts the album, not the state.
+    let line = Line::from(vec![
         Span::styled(format!(" {icon} "), theme().accent.bold()),
-        Span::styled(track.title.as_str(), Style::new().bold()),
+        Span::styled(track.title.clone(), Style::new().bold()),
+        Span::styled(state, theme().warning),
         Span::raw(" — "),
-        Span::raw(track.artist.as_str()),
+        Span::raw(track.artist.clone()),
         Span::styled(format!(" · {}", album.title), Style::new().dim()),
         Span::styled(
             format!(" · {}/{}", index + 1, album.tracks.len()),
             Style::new().dim(),
         ),
-    ];
-    if !state.is_empty() {
-        line.push(Span::styled(state, theme().warning));
-    }
-    frame.render_widget(Line::from(line), info);
+    ]);
+    frame.render_widget(super::fit(line, usize::from(info.width)), info);
 
     frame.render_widget(
         progress_line(status, track.duration, usize::from(progress.width)),
