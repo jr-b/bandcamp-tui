@@ -22,12 +22,16 @@ const PROGRESS_TICK: Duration = Duration::from_millis(250);
 const ALBUM_DEBOUNCE: Duration = Duration::from_millis(250);
 /// Wait this long after typing stops before searching.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
+/// Info messages disappear after this long, bringing the key hints back.
+const MESSAGE_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Pending debounced actions; each kind keeps only its latest request.
 #[derive(Default)]
 struct Timers {
     album: Option<(Instant, crate::bandcamp::ItemId)>,
     search: Option<(Instant, u64)>,
+    /// When the info message with this serial expires.
+    message: Option<(Instant, u64)>,
 }
 
 pub struct Services {
@@ -130,6 +134,14 @@ pub async fn run(
             let effects = app.after_draw();
             executor.run(effects, &mut timers);
         }
+        // A new info message starts its own countdown; errors and no message cancel it.
+        match app.expiring_message() {
+            Some(serial) if timers.message.is_none_or(|(_, s)| s != serial) => {
+                timers.message = Some((Instant::now() + MESSAGE_TIMEOUT, serial));
+            }
+            Some(_) => {}
+            None => timers.message = None,
+        }
         let action = tokio::select! {
             event = input.next() => match event {
                 Some(Ok(Event::Key(key))) => input::action_for(key, input_mode(&app)),
@@ -148,6 +160,9 @@ pub async fn run(
             },
             () = sleep_until(timers.search.map(|t| t.0)), if timers.search.is_some() => {
                 timers.search.take().map(|(_, generation)| Action::SearchDue(generation))
+            },
+            () = sleep_until(timers.message.map(|t| t.0)), if timers.message.is_some() => {
+                timers.message.take().map(|(_, serial)| Action::ExpireMessage(serial))
             },
             _ = ticker.tick(), if app.is_playing() => player.as_ref().and_then(|p| {
                 // Skip the redraw unless something visible changed (the clock shows whole

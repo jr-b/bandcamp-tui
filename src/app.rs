@@ -111,6 +111,8 @@ pub enum Action {
     ClearInput,
     /// Terminal resized; just redraw.
     Resize,
+    /// The info message with this serial has been shown long enough.
+    ExpireMessage(u64),
     DiscoverLoaded {
         generation: u64,
         result: Result<DiscoverPage, String>,
@@ -335,6 +337,8 @@ pub enum MessageKind {
 pub struct Message {
     pub kind: MessageKind,
     pub text: String,
+    /// Unique per message, so a timer set for one never clears a later one.
+    pub serial: u64,
 }
 
 // Independent flags (player present, art on, help open, quitting), not a state machine.
@@ -408,6 +412,8 @@ pub struct App {
     pub player: Status,
     pub player_available: bool,
     pub message: Option<Message>,
+    /// Source of [`Message::serial`]s.
+    message_serial: u64,
     pub should_quit: bool,
     /// The help overlay, if open.
     pub help: Option<HelpView>,
@@ -458,6 +464,7 @@ impl App {
             player: Status::default(),
             player_available,
             message: None,
+            message_serial: 0,
             should_quit: false,
             help: None,
         };
@@ -611,6 +618,7 @@ impl App {
             | Action::ArtEncoded { .. }
             | Action::Player { .. }
             | Action::Notice(_)
+            | Action::ExpireMessage(_)
             | Action::SearchDue(_)
             | Action::SearchLoaded { .. }
             | Action::ArtistLoaded { .. }) => self.background_update(other),
@@ -651,6 +659,12 @@ impl App {
             Action::Player { event, status } => self.player_update(event, status),
             Action::Notice(text) => {
                 self.info(text);
+                vec![]
+            }
+            Action::ExpireMessage(serial) => {
+                if self.expiring_message() == Some(serial) {
+                    self.message = None;
+                }
                 vec![]
             }
             Action::SearchDue(generation) => self.search_due(generation),
@@ -1863,19 +1877,32 @@ impl App {
     }
 
     fn info(&mut self, text: impl Into<String>) {
-        self.message = Some(Message {
-            kind: MessageKind::Info,
-            text: text.into(),
-        });
+        self.show_message(MessageKind::Info, text.into());
     }
 
     fn error(&mut self, text: impl Into<String>) {
         let text = text.into();
         tracing::warn!(%text);
+        self.show_message(MessageKind::Error, text);
+    }
+
+    fn show_message(&mut self, kind: MessageKind, text: String) {
+        self.message_serial += 1;
         self.message = Some(Message {
-            kind: MessageKind::Error,
+            kind,
             text,
+            serial: self.message_serial,
         });
+    }
+
+    /// The serial of the message that should disappear on its own: info messages do, errors
+    /// stay until a keypress.
+    #[must_use]
+    pub fn expiring_message(&self) -> Option<u64> {
+        self.message
+            .as_ref()
+            .filter(|m| m.kind == MessageKind::Info)
+            .map(|m| m.serial)
     }
 }
 
@@ -1884,6 +1911,7 @@ impl Action {
         !matches!(
             self,
             Self::Resize
+                | Self::ExpireMessage(_)
                 | Self::DiscoverLoaded { .. }
                 | Self::AlbumDue(_)
                 | Self::AlbumLoaded { .. }
@@ -3414,5 +3442,33 @@ mod tests {
         app.update(Action::ToggleInfo);
         assert!(app.album_pane.show_info);
         assert!(app.listening.show_info, "remembered for next time");
+    }
+
+    #[test]
+    fn info_messages_expire_but_errors_stay() {
+        let mut app = loaded();
+        app.update(Action::Notice("first".into()));
+        let first = app.expiring_message().unwrap();
+        app.update(Action::Notice("second".into()));
+        let second = app.expiring_message().unwrap();
+        assert_ne!(first, second);
+        app.update(Action::ExpireMessage(first));
+        assert!(
+            app.message.is_some(),
+            "a stale timer leaves the newer message"
+        );
+        app.update(Action::ExpireMessage(second));
+        assert!(app.message.is_none());
+
+        app.update(Action::Notice("info".into()));
+        let info = app.expiring_message().unwrap();
+        app.update(Action::VolumeUp); // with a player: no error, clears the message anyway
+        app.error("broken");
+        assert_eq!(app.expiring_message(), None, "errors don't expire");
+        app.update(Action::ExpireMessage(info));
+        assert_eq!(
+            app.message.as_ref().map(|m| m.text.as_str()),
+            Some("broken")
+        );
     }
 }
