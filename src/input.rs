@@ -27,6 +27,7 @@ pub const HINTS: &[(&str, &str)] = &[
     ("a", "autoplay"),
     ("s", "sort"),
     ("r", "refresh"),
+    ("c", "playing"),
     ("↑↓", "move"),
 ];
 
@@ -76,6 +77,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("g G  Home End", "top / bottom"),
             ("PgUp PgDn  ^u ^d", "page"),
             ("tab  h l", "switch pane"),
+            ("c", "jump to what's playing"),
             ("i", "about / credits / artist bio"),
             ("o", "open on bandcamp.com"),
         ],
@@ -174,6 +176,7 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Char('t') => Action::OpenPicker(PickerKind::Time),
         KeyCode::Char('L') => Action::OpenPicker(PickerKind::Location),
         KeyCode::Char('o') => Action::OpenInBrowser,
+        KeyCode::Char('c') => Action::JumpToPlaying,
         KeyCode::Char('a') => Action::ToggleAutoplay,
         KeyCode::Char('e') => Action::Enqueue,
         KeyCode::Char('E') => Action::EnqueueNext,
@@ -359,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_quits_but_c_does_nothing() {
+    fn ctrl_c_quits_and_c_jumps_to_playing() {
         assert_eq!(
             action_for(
                 KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
@@ -367,7 +370,7 @@ mod tests {
             ),
             Some(Action::Quit)
         );
-        assert_eq!(press(KeyCode::Char('c')), None);
+        assert_eq!(press(KeyCode::Char('c')), Some(Action::JumpToPlaying));
     }
 
     #[test]

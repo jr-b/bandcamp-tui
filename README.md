@@ -49,6 +49,7 @@ NO_COLOR=1 bandcamp-tui                      # monochrome: bold, dim and reverse
 |-----|--------|
 | `↑↓` `j k`, `g G`, `PgUp PgDn` `^u ^d` | move |
 | `tab`, `h` / `l` | switch pane |
+| `c` | jump to the playing release |
 | `⏎` | play album / play from track |
 | `space` | pause |
 | `n` / `p` | next / previous track |

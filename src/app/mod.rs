@@ -104,6 +104,8 @@ pub enum Action {
     },
     /// Open the selected release (or album pane's album) on bandcamp.com.
     OpenInBrowser,
+    /// Select the playing release in the list, and its playing track (`c`).
+    JumpToPlaying,
     ShowHelp,
     CloseHelp,
     TogglePause,
@@ -593,6 +595,7 @@ impl App {
             Action::OpenSearch => self.open_popup(Popup::Search),
             Action::BackToDiscover => self.back_to_discover(),
             Action::OpenInBrowser => self.open_in_browser(),
+            Action::JumpToPlaying => self.jump_to_playing(),
             Action::ShowHelp => self.open_popup(Popup::Help),
             Action::TogglePause => self.player_command(PlayerCommand::TogglePause),
             Action::NextTrack => self.player_command(PlayerCommand::Next),

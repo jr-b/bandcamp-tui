@@ -1426,3 +1426,23 @@ fn info_messages_expire_but_errors_stay() {
         Some("broken")
     );
 }
+
+#[test]
+fn jump_to_playing_selects_the_release_and_track() {
+    let mut app = loaded();
+    app.update(Action::JumpToPlaying);
+    assert_eq!(
+        app.message.as_ref().map(|m| m.text.as_str()),
+        Some("Nothing is playing.")
+    );
+
+    let mut app = playing_first();
+    playing_track(&mut app, 2);
+    let playing = app.now_playing.as_ref().map(|a| a.id);
+    app.update(Action::Down);
+    app.update(Action::Down);
+    assert_ne!(app.selected().map(|i| i.id), playing);
+    app.update(Action::JumpToPlaying);
+    assert_eq!(app.selected().map(|i| i.id), playing);
+    assert_eq!(app.album_pane.tracks.selected(), Some(2));
+}

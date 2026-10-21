@@ -162,4 +162,26 @@ impl App {
         self.info(format!("Opening {url}"));
         vec![Effect::OpenUrl(url)]
     }
+
+    /// `c`: select the playing release in the list, and its playing track in the tracklist.
+    pub(super) fn jump_to_playing(&mut self) -> Vec<Effect> {
+        let Some(album) = self.now_playing.clone() else {
+            self.info("Nothing is playing.");
+            return vec![];
+        };
+        let Some(index) = self.discover.items.iter().position(|i| i.id == album.id) else {
+            self.info(format!("{} isn't in this list.", album.title));
+            return vec![];
+        };
+        let mut effects = Vec::new();
+        if self.table.selected() != Some(index) {
+            self.table.select(Some(index));
+            effects.extend(self.selection_changed());
+            effects.extend(self.maybe_load_more());
+        }
+        if let Some(track) = self.playing_index_in(&album) {
+            self.album_pane.tracks.select(Some(track));
+        }
+        effects
+    }
 }
