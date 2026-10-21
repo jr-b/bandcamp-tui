@@ -50,6 +50,11 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
             "No audio output."
         };
         frame.render_widget(Line::from(format!(" {hint}")).dim(), info);
+        // The volume `+`/`-` set, where it shows while playing.
+        if app.player_available {
+            let volume = format!("vol {:>3}% ", volume_percent(status.volume));
+            frame.render_widget(Line::from(volume).right_aligned().dim(), progress);
+        }
         return;
     };
     let track = &album.tracks[index];
