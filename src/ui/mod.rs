@@ -9,10 +9,11 @@ mod now_playing;
 mod picker;
 mod queue;
 mod search;
+pub mod theme;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
@@ -21,8 +22,8 @@ use crate::bandcamp::{Filters, Slice};
 use crate::format;
 use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
 use crate::text_input::TextInput;
+use theme::theme;
 
-const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
 const TWO_PANE_MIN_WIDTH: u16 = 80;
 
@@ -110,7 +111,7 @@ fn draw_too_small(frame: &mut Frame, area: Rect) {
 /// dim placeholder, and the terminal's cursor where typing goes.
 fn draw_input(frame: &mut Frame, area: Rect, input: &TextInput, placeholder: &str) {
     const PROMPT: &str = "› ";
-    let prompt = Span::styled(PROMPT, Style::new().fg(ACCENT));
+    let prompt = Span::styled(PROMPT, theme().accent);
     let room = usize::from(area.width).saturating_sub(PROMPT.chars().count());
     let (line, column) = if input.is_empty() {
         let hint = Span::styled(placeholder.to_owned(), Style::new().dim());
@@ -131,7 +132,7 @@ fn pane(title: &str, focused: bool) -> Block<'static> {
     let block = Block::bordered().title(format!(" {title} "));
     if focused {
         block
-            .border_style(Style::new().fg(ACCENT))
+            .border_style(theme().accent)
             .title_style(Style::new().bold())
     } else {
         block.border_style(Style::new().dim())
@@ -168,10 +169,7 @@ fn slice_label(slice: Slice) -> &'static str {
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let mut left = vec![Span::styled(
-        " bandcamp ",
-        Style::new().fg(Color::Black).bg(ACCENT).bold(),
-    )];
+    let mut left = vec![Span::styled(" bandcamp ", theme().brand)];
     let parts = match &app.source {
         ListSource::Discover => {
             left.push(Span::raw(" Discover"));
@@ -213,10 +211,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     let line = match &app.message {
-        Some(m) if m.kind == MessageKind::Error => {
-            Line::from(format!(" {}", m.text)).fg(Color::Red).bold()
-        }
-        Some(m) => Line::from(format!(" {}", m.text)).fg(ACCENT),
+        Some(m) if m.kind == MessageKind::Error => Line::from(format!(" {}", m.text))
+            .patch_style(theme().error)
+            .bold(),
+        Some(m) => Line::from(format!(" {}", m.text)).patch_style(theme().accent),
         None => {
             // Show as many whole hints as fit; they're ordered by importance.
             let hints = if app.help.is_some() {
@@ -242,7 +240,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 if gap > 0 {
                     spans.push(Span::raw("  "));
                 }
-                spans.push(Span::styled(*keys, Style::new().fg(ACCENT)));
+                spans.push(Span::styled(*keys, theme().accent));
                 spans.push(Span::styled(format!(" {what}"), Style::new().dim()));
             }
             Line::from(spans)
@@ -258,6 +256,7 @@ mod tests {
 
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
 
     use super::*;
     use crate::app::{Action, Effect};
@@ -618,6 +617,46 @@ mod tests {
         let row: String = (0..60).map(|x| buffer[(x, cursor.y)].symbol()).collect();
         assert!(row.contains("› a very long"), "{row}");
         assert_eq!(buffer[(cursor.x, cursor.y)].symbol(), "a");
+    }
+
+    /// Every cell's colours, to check a theme end to end.
+    fn colors(terminal: &Terminal<TestBackend>) -> Vec<Color> {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .flat_map(|cell| [cell.fg, cell.bg])
+            .collect()
+    }
+
+    #[test]
+    fn no_color_theme_uses_no_colors() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("preorder"));
+        app.update(Action::Play);
+        app.update(Action::Notice("hello".into()));
+        theme::set(&theme::COLOR);
+        assert!(colors(&render(&mut app, 100, 24)).contains(&Color::Cyan));
+
+        theme::set(&theme::MONO);
+        let mut screens = vec![render(&mut app, 100, 24)];
+        app.update(Action::OpenSearch);
+        screens.push(render(&mut app, 100, 24));
+        app.update(Action::ClosePopup);
+        app.update(Action::ShowHelp);
+        screens.push(render(&mut app, 100, 24));
+        app.update(Action::CloseHelp);
+        app.update(Action::ToggleListening);
+        screens.push(render(&mut app, 100, 24));
+        theme::set(&theme::COLOR);
+        for screen in &screens {
+            assert!(
+                colors(screen).iter().all(|c| *c == Color::Reset),
+                "{}",
+                screen.backend()
+            );
+        }
     }
 
     #[test]

@@ -42,6 +42,7 @@ bandcamp-tui                                 # last-used filters
 bandcamp-tui -t electronic -t techno -s new  # tags; sort: top, new, random
 bandcamp-tui --fresh                         # ignore remembered state
 bandcamp-tui --no-art                        # no cover art
+NO_COLOR=1 bandcamp-tui                      # monochrome: bold, dim and reverse only
 ```
 
 | key | action |

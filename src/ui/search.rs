@@ -2,11 +2,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 
-use super::ACCENT;
+use super::theme::theme;
 use crate::app::SearchBox;
 use crate::bandcamp::{SearchResult, TralbumKind};
 use crate::format;
@@ -24,9 +24,13 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
     let mut block = Block::bordered()
         .title(" Search Bandcamp ")
         .title_style(Style::new().bold())
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(theme().accent);
     if search.loading {
-        block = block.title(Line::from(" searching… ").right_aligned().fg(ACCENT));
+        block = block.title(
+            Line::from(" searching… ")
+                .right_aligned()
+                .patch_style(theme().accent),
+        );
     }
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
@@ -43,7 +47,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
 
     if let Some(error) = &search.error {
         frame.render_widget(
-            Line::from(format!("Search failed: {error}")).fg(Color::Red),
+            Line::from(format!("Search failed: {error}")).patch_style(theme().error),
             list,
         );
         return;
@@ -74,7 +78,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
 }
 
 fn result_line(result: &SearchResult, width: usize) -> Line<'static> {
-    let badge = |label: &str, color| Span::styled(format!("{label:<7}"), Style::new().fg(color));
+    let badge = |label: &str, style| Span::styled(format!("{label:<7}"), style);
     match result {
         SearchResult::Artist(artist) => {
             let label = if artist.is_label { "label" } else { "artist" };
@@ -93,7 +97,7 @@ fn result_line(result: &SearchResult, width: usize) -> Line<'static> {
                 format::truncate(&format!("  {}", detail.join(" · ")), room).into_owned()
             };
             Line::from(vec![
-                badge(label, Color::Magenta),
+                badge(label, theme().badge),
                 Span::styled(name, Style::new().bold()),
                 Span::styled(detail, Style::new().dim()),
             ])
@@ -107,9 +111,9 @@ fn result_line(result: &SearchResult, width: usize) -> Line<'static> {
             let room = width.saturating_sub(unicode_width::UnicodeWidthStr::width(title.as_str()));
             let by = format::truncate(&format!(" — {}", item.artist), room).into_owned();
             Line::from(vec![
-                badge(label, ACCENT),
+                badge(label, theme().accent),
                 Span::raw(title),
-                Span::styled(by, Style::new().fg(Color::Gray)),
+                Span::styled(by, theme().secondary),
             ])
         }
     }

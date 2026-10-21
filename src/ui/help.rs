@@ -7,7 +7,7 @@ use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 
-use super::ACCENT;
+use super::theme::theme;
 use crate::app::HelpView;
 use crate::input::HELP;
 
@@ -22,7 +22,7 @@ fn section_lines(
     section: &'static str,
     keys: &[(&'static str, &'static str)],
 ) -> Vec<Line<'static>> {
-    let mut lines = vec![Line::from(section).fg(ACCENT).bold()];
+    let mut lines = vec![Line::from(section).patch_style(theme().accent).bold()];
     for (key, what) in keys {
         lines.push(Line::from(vec![
             Span::styled(format!("  {key:<KEY_WIDTH$}"), Style::new().bold()),
@@ -101,7 +101,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, view: &mut HelpView) {
     let block = Block::bordered()
         .title(" Keys ")
         .title_style(Style::new().bold())
-        .border_style(Style::new().fg(ACCENT))
+        .border_style(theme().accent)
         .padding(Padding::horizontal(1));
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);

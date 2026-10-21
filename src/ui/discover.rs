@@ -2,11 +2,12 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
 
-use super::{ACCENT, pane};
+use super::pane;
+use super::theme::theme;
 use crate::app::{App, Focus, ListSource};
 use crate::format;
 
@@ -30,26 +31,13 @@ fn widths(show_tracks: bool) -> Vec<Constraint> {
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Discover;
-    let mut title = match &app.source {
-        ListSource::Discover => "Discover".to_owned(),
-        ListSource::Search(_) => "Search results".to_owned(),
-        ListSource::Artist(name) => name.clone(),
-    };
-    if let Some(selected) = app
-        .table
-        .selected()
-        .filter(|_| !app.discover.items.is_empty())
-    {
-        let total = app.discover.total.max(app.discover.items.len() as u64);
-        title = format!(
-            "{title} · {}/{}",
-            format::thousands(selected as u64 + 1),
-            format::thousands(total)
-        );
-    }
-    let mut block = pane(&title, focused);
+    let mut block = pane(&title(app), focused);
     if app.discover.loading {
-        block = block.title(Line::from(" loading… ").right_aligned().fg(ACCENT));
+        block = block.title(
+            Line::from(" loading… ")
+                .right_aligned()
+                .patch_style(theme().accent),
+        );
     }
     let inner = block.inner(area);
     // One row is the column header.
@@ -92,7 +80,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         let title = if item.is_preorder {
             const TAG: &str = "pre ";
             Line::from(vec![
-                Span::styled(TAG, Style::new().fg(Color::Yellow)),
+                Span::styled(TAG, theme().warning),
                 Span::raw(format::truncate(
                     &item.title,
                     title_width.saturating_sub(TAG.len()),
@@ -109,10 +97,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
             Span::raw(format!("{}m", (d.as_secs() + 30) / 60))
         });
         let mut cells = vec![
-            Cell::from(Span::styled(marker, Style::new().fg(ACCENT))),
+            Cell::from(Span::styled(marker, theme().accent)),
             Cell::from(title),
-            Cell::from(format::truncate(&item.artist, artist_width))
-                .style(Style::new().fg(Color::Gray)),
+            Cell::from(format::truncate(&item.artist, artist_width)).style(theme().secondary),
         ];
         if show_tracks {
             cells.push(Cell::from(Line::from(tracks).right_aligned()));
@@ -139,6 +126,30 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     frame.render_stateful_widget(table, area, &mut app.table);
 }
 
+/// What the list shows, and where the selection is in it: `Discover · 12/1,947,113`.
+fn title(app: &App) -> String {
+    let name = match &app.source {
+        ListSource::Discover => "Discover",
+        ListSource::Search(_) => "Search results",
+        ListSource::Artist(name) => name,
+    };
+    match app
+        .table
+        .selected()
+        .filter(|_| !app.discover.items.is_empty())
+    {
+        Some(selected) => {
+            let total = app.discover.total.max(app.discover.items.len() as u64);
+            format!(
+                "{name} · {}/{}",
+                format::thousands(selected as u64 + 1),
+                format::thousands(total)
+            )
+        }
+        None => name.to_owned(),
+    }
+}
+
 /// What the list says while it has no releases: loading, failed, or really empty.
 fn empty_text(app: &App) -> Text<'static> {
     let discover = app.source == ListSource::Discover;
@@ -154,7 +165,7 @@ fn empty_text(app: &App) -> Text<'static> {
             ("these releases", "Press esc to go back to Discover.")
         };
         return Text::from(vec![
-            Line::from(format!("Couldn't load {what}: {error}")).fg(Color::Red),
+            Line::from(format!("Couldn't load {what}: {error}")).patch_style(theme().error),
             Line::from(next).dim(),
         ]);
     }

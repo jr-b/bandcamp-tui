@@ -2,12 +2,12 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 use unicode_width::UnicodeWidthStr;
 
-use super::ACCENT;
+use super::theme::theme;
 use crate::app::App;
 use crate::bandcamp::TralbumKind;
 use crate::format;
@@ -28,7 +28,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::bordered()
         .title(format!(" Queue · {} ", app.queue.len()))
         .title_style(Style::new().bold())
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(theme().accent);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
@@ -41,7 +41,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let now_line = match app.current_track() {
         Some((album, index)) => Line::from(vec![
-            Span::styled("Now  ♪ ", Style::new().fg(ACCENT)),
+            Span::styled("Now  ♪ ", theme().accent),
             Span::raw(
                 format::truncate(
                     &format!("{} — {}", album.title, album.artist),
@@ -81,9 +81,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
             let by = format::truncate(&format!(" — {}", entry.artist), room).into_owned();
             ListItem::new(Line::from(vec![
                 Span::styled(format!("{:>2}  ", i + 1), Style::new().dim()),
-                Span::styled(format!("{badge:<7}"), Style::new().fg(ACCENT)),
+                Span::styled(format!("{badge:<7}"), theme().accent),
                 Span::raw(title),
-                Span::styled(by, Style::new().fg(Color::Gray)),
+                Span::styled(by, theme().secondary),
             ]))
         })
         .collect();

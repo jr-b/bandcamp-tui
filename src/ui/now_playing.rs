@@ -4,11 +4,11 @@ use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
 
-use super::ACCENT;
+use super::theme::theme;
 use crate::app::App;
 use crate::format;
 use crate::player::{PlaybackState, Status};
@@ -27,7 +27,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         right.push(Span::styled(format!("{more} ·"), Style::new().dim()));
     }
     right.push(if app.autoplay {
-        Span::styled(" autoplay on ", Style::new().fg(ACCENT))
+        Span::styled(" autoplay on ", theme().accent)
     } else {
         Span::styled(" autoplay off ", Style::new().dim())
     });
@@ -54,7 +54,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
     let track = &album.tracks[index];
     let (icon, state) = state_label(status.state);
     let mut line = vec![
-        Span::styled(format!(" {icon} "), Style::new().fg(ACCENT).bold()),
+        Span::styled(format!(" {icon} "), theme().accent.bold()),
         Span::styled(track.title.as_str(), Style::new().bold()),
         Span::raw(" — "),
         Span::raw(track.artist.as_str()),
@@ -65,7 +65,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         ),
     ];
     if !state.is_empty() {
-        line.push(Span::styled(state, Style::new().fg(Color::Yellow)));
+        line.push(Span::styled(state, theme().warning));
     }
     frame.render_widget(Line::from(line), info);
 
@@ -136,7 +136,7 @@ fn progress_bar(width: usize, ratio: f64) -> Span<'static> {
     )]
     let filled = ((width - 1) as f64 * ratio).round() as usize;
     let bar = format!("{}●{}", "━".repeat(filled), "─".repeat(width - 1 - filled));
-    Span::styled(bar, Style::new().fg(ACCENT))
+    Span::styled(bar, theme().accent)
 }
 
 #[cfg(test)]

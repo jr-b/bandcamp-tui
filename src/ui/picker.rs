@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 
-use super::ACCENT;
+use super::theme::theme;
 use crate::picker::Picker;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) {
@@ -25,7 +25,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) {
     let block = Block::bordered()
         .title(format!(" {} ", picker.kind.title()))
         .title_style(Style::new().bold())
-        .border_style(Style::new().fg(ACCENT));
+        .border_style(theme().accent);
     let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);

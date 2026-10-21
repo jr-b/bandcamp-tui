@@ -3,11 +3,12 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 
 use super::now_playing::{progress_line, state_label};
-use super::{ACCENT, pane};
+use super::pane;
+use super::theme::theme;
 use crate::app::{App, UpNext};
 use crate::art::{Art, ArtBox};
 use crate::bandcamp::Album;
@@ -144,14 +145,14 @@ fn track_lines(
     let track = &album.tracks[index];
     let (icon, state) = state_label(state);
     let mut title = vec![
-        Span::styled(format!("{icon} "), Style::new().fg(ACCENT).bold()),
+        Span::styled(format!("{icon} "), theme().accent.bold()),
         Span::styled(
             format::truncate(&track.title, width).into_owned(),
             Style::new().bold(),
         ),
     ];
     if !state.is_empty() {
-        title.push(Span::styled(state, Style::new().fg(Color::Yellow)));
+        title.push(Span::styled(state, theme().warning));
     }
     let position = format!(
         "{} · track {} of {}",
