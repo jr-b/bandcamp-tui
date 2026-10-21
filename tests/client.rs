@@ -1,6 +1,9 @@
 //! `BandcampClient` against a mock server: request shape, pagination and error handling.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "helpers outside #[test] fail loudly on purpose"
+)]
 
 use bandcamp_tui::bandcamp::{
     BandId, BandcampClient, DiscoverQuery, Error, ItemId, Slice, TralbumKind,

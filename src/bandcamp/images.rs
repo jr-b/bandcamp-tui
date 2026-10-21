@@ -51,8 +51,10 @@ pub fn image_url(id: ImageId, size: ImageSize) -> Url {
 }
 
 fn build(file: &str) -> Url {
-    // Both parts are fixed ASCII or digits, so this can't fail.
-    #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::expect_used,
+        reason = "both parts are fixed ASCII or digits, so this can't fail"
+    )]
     Url::parse(IMAGE_HOST)
         .and_then(|base| base.join(file))
         .expect("image URL is always valid")

@@ -52,6 +52,9 @@ expect_used = "warn"
 dbg_macro = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
+# Lint exceptions use `#[expect(..., reason = "...")]`, so stale ones are reported.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
 
 [profile.release]
 lto = "thin"

@@ -10,8 +10,10 @@ use serde::Deserialize;
 const SNAPSHOT: &str = include_str!("../../assets/discover_filters.json");
 
 static FILTERS: LazyLock<Filters> = LazyLock::new(|| {
-    // The snapshot is compiled in and covered by a unit test, so a parse failure is a build bug.
-    #[allow(clippy::expect_used)]
+    #[expect(
+        clippy::expect_used,
+        reason = "the snapshot is compiled in and covered by a unit test"
+    )]
     serde_json::from_str(SNAPSHOT).expect("embedded discover_filters.json is valid")
 });
 

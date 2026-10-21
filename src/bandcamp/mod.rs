@@ -53,8 +53,7 @@ pub struct BandcampClient {
 impl BandcampClient {
     /// A client for `https://bandcamp.com`.
     pub fn new() -> Result<Self> {
-        // The default is a valid constant.
-        #[allow(clippy::expect_used)]
+        #[expect(clippy::expect_used, reason = "the default is a valid constant")]
         let base = Url::parse(DEFAULT_BASE_URL).expect("default base URL is valid");
         Self::with_base_url(base)
     }
@@ -152,8 +151,10 @@ impl BandcampClient {
     }
 
     fn endpoint(&self, path: &str) -> Url {
-        // `path` is always one of our relative constants.
-        #[allow(clippy::expect_used)]
+        #[expect(
+            clippy::expect_used,
+            reason = "`path` is always one of our relative constants"
+        )]
         self.base_url.join(path).expect("endpoint path is valid")
     }
 

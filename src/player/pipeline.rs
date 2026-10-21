@@ -299,7 +299,7 @@ impl Worker {
 
     /// Writes decoded samples into the ring, waiting while it's full. Handles seeks that arrive
     /// while waiting; returns the new segment if one was queued.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity, reason = "a one-off return type")]
     fn push(
         &self,
         producer: &mut rtrb::Producer<Sample>,
@@ -349,7 +349,11 @@ impl Worker {
         };
 
         let channels = usize::from(d.channels.get());
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a short buffer duration times a sample rate"
+        )]
         let ring_frames =
             (self.ctx.pcm_buffer.as_secs_f64() * f64::from(d.sample_rate.get())).ceil() as usize;
         let ring_samples = ring_frames.max(1024) * channels;

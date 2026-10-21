@@ -120,7 +120,11 @@ pub(super) fn progress_line(
 }
 
 fn volume_percent(volume: f32) -> u8 {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to 0..=100
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to 0..=100"
+    )]
     let percent = (volume.clamp(0.0, 1.0) * 100.0).round() as u8;
     percent
 }
@@ -130,10 +134,11 @@ fn progress_bar(width: usize, ratio: f64) -> Span<'static> {
     if width < 2 {
         return Span::raw("");
     }
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_precision_loss
+        clippy::cast_precision_loss,
+        reason = "a terminal width, and a ratio in 0..=1"
     )]
     let filled = ((width - 1) as f64 * ratio).round() as usize;
     let bar = format!("{}●{}", "━".repeat(filled), "─".repeat(width - 1 - filled));

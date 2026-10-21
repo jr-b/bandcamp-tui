@@ -8,7 +8,11 @@
 //! `--seek-test` exercises seeking (forward and back out of the buffer window) and skipping.
 //! Set `RUST_LOG=bandcamp_tui=debug` for pipeline logs.
 
-#![allow(clippy::print_stdout, clippy::print_stderr)]
+#![expect(
+    clippy::print_stdout,
+    clippy::print_stderr,
+    reason = "a command-line example reports to the terminal"
+)]
 
 use std::time::Duration;
 

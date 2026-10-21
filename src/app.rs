@@ -340,8 +340,10 @@ pub struct Message {
     pub serial: u64,
 }
 
-// Independent flags (player present, art on, help open, quitting), not a state machine.
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent flags (player present, art on, quitting), not a state machine"
+)]
 #[derive(Debug)]
 pub struct App {
     pub query: DiscoverQuery,
