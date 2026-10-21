@@ -1,6 +1,8 @@
 //! Key bindings. Vim-style and arrow keys both work.
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 
 use crate::app::Action;
 use crate::picker::PickerKind;
@@ -78,6 +80,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("PgUp PgDn  ^u ^d", "page"),
             ("tab  h l", "switch pane"),
             ("c", "jump to what's playing"),
+            ("wheel", "scroll what's under the pointer"),
             ("i", "about / credits / artist bio"),
             ("o", "open on bandcamp.com"),
         ],
@@ -130,6 +133,21 @@ pub enum Mode {
     Queue,
     /// The listening view: transport keys only.
     Listening,
+}
+
+/// Maps a mouse event to an action: only the wheel is used.
+#[must_use]
+pub fn mouse_action(event: MouseEvent) -> Option<Action> {
+    let down = match event.kind {
+        MouseEventKind::ScrollDown => true,
+        MouseEventKind::ScrollUp => false,
+        _ => return None,
+    };
+    Some(Action::Wheel {
+        down,
+        column: event.column,
+        row: event.row,
+    })
 }
 
 /// Maps a key to an action for the current mode.
@@ -352,6 +370,34 @@ mod tests {
             key(KeyCode::Char('u'), KeyModifiers::CONTROL),
             edit(Edit::Clear)
         );
+    }
+
+    #[test]
+    fn only_the_wheel_is_used() {
+        use ratatui::crossterm::event::MouseButton;
+        let mouse = |kind| MouseEvent {
+            kind,
+            column: 3,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            mouse_action(mouse(MouseEventKind::ScrollDown)),
+            Some(Action::Wheel {
+                down: true,
+                column: 3,
+                row: 4
+            })
+        );
+        assert!(matches!(
+            mouse_action(mouse(MouseEventKind::ScrollUp)),
+            Some(Action::Wheel { down: false, .. })
+        ));
+        assert_eq!(
+            mouse_action(mouse(MouseEventKind::Down(MouseButton::Left))),
+            None
+        );
+        assert_eq!(mouse_action(mouse(MouseEventKind::Moved)), None);
     }
 
     #[test]

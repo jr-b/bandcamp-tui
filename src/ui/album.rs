@@ -25,6 +25,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, compact: bool) 
         let hint = if show_info { " i tracks " } else { " i about " };
         block = block.title(Line::from(hint).right_aligned().dim());
     }
+    app.pane_areas.album = area;
     let inner = block.inner(area);
     frame.render_widget(block, area);
     // Recorded for `App::after_draw`, which fetches or re-encodes the cover at this size.

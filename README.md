@@ -68,6 +68,8 @@ NO_COLOR=1 bandcamp-tui                      # monochrome: bold, dim and reverse
 | `?` | help |
 | `q`, `^c` | quit |
 
+The mouse wheel scrolls the pane, popup or text under the pointer. Hold `Shift` (`Option` in iTerm2) to select text with the mouse.
+
 Filters, volume, queue and view are saved to `state.toml`, alongside the log file `bandcamp-tui.log` (override with `--log-file`; the previous session's log is kept as `bandcamp-tui.log.1`):
 
 - macOS: `~/Library/Application Support/bandcamp-tui/`

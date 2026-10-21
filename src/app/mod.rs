@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use ratatui::layout::{Position, Rect};
 use ratatui::widgets::{ListState, TableState};
 
 use crate::art::{Art, ArtBox};
@@ -106,6 +107,12 @@ pub enum Action {
     OpenInBrowser,
     /// Select the playing release in the list, and its playing track (`c`).
     JumpToPlaying,
+    /// The mouse wheel turned one step at this cell.
+    Wheel {
+        down: bool,
+        column: u16,
+        row: u16,
+    },
     ShowHelp,
     CloseHelp,
     TogglePause,
@@ -319,6 +326,14 @@ pub struct AlbumPane {
     pub art_box: Option<ArtBox>,
 }
 
+/// Where the browse panes were last drawn, so the mouse wheel can scroll the one it's over.
+/// A pane that isn't shown has an empty area.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PaneAreas {
+    pub list: Rect,
+    pub album: Rect,
+}
+
 /// State of the `?` help overlay.
 #[derive(Debug, Default)]
 pub struct HelpView {
@@ -384,6 +399,8 @@ pub struct App {
     /// Switch to the listening view whenever the queue starts a release (`config.toml`).
     pub listen_on_queue: bool,
     pub album_pane: AlbumPane,
+    /// Set while rendering.
+    pub pane_areas: PaneAreas,
     pub listening: ListeningPane,
     /// Open filter popup, if any. While open it gets all keys.
     pub picker: Option<Picker>,
@@ -455,6 +472,7 @@ impl App {
             screen: Screen::Browse,
             listen_on_queue: false,
             album_pane: AlbumPane::default(),
+            pane_areas: PaneAreas::default(),
             listening: ListeningPane::default(),
             picker: None,
             albums: Lru::new(ALBUM_CACHE_SIZE),
@@ -552,6 +570,10 @@ impl App {
     }
 
     pub fn update(&mut self, action: Action) -> Vec<Effect> {
+        let action = match action {
+            Action::Wheel { down, column, row } => self.wheel(down, Position::new(column, row)),
+            other => other,
+        };
         // Any keypress dismisses the previous message.
         if action.is_user_input() {
             self.message = None;
@@ -619,7 +641,9 @@ impl App {
             }
             // Picker keys with no picker open (handled above when one is), and resizes, which
             // only need a redraw.
-            Action::ClosePopup
+            // Wheel steps were turned into moves above.
+            Action::Wheel { .. }
+            | Action::ClosePopup
             | Action::CloseHelp
             | Action::Edit(_)
             | Action::Resize
@@ -639,6 +663,23 @@ impl App {
             | Action::SearchLoaded { .. }
             | Action::ArtistLoaded { .. }) => self.background_update(other),
         }
+    }
+
+    /// The wheel moves like ↑/↓ in whatever it's over: the open popup, the listening view's
+    /// text, or the browse pane under the pointer, which it focuses so keys act there too.
+    fn wheel(&mut self, down: bool, at: Position) -> Action {
+        let popup = self.help.is_some()
+            || self.picker.is_some()
+            || self.search_open
+            || self.queue_view.is_some();
+        if !popup && self.screen == Screen::Browse {
+            if self.pane_areas.list.contains(at) {
+                self.focus = Focus::Discover;
+            } else if self.pane_areas.album.contains(at) {
+                self.focus = Focus::Album;
+            }
+        }
+        if down { Action::Down } else { Action::Up }
     }
 
     /// The open popup handles `action` first; `None` means no popup took it.

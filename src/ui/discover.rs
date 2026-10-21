@@ -40,6 +40,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
                 .patch_style(theme().accent),
         );
     }
+    app.pane_areas.list = area;
     let inner = block.inner(area);
     // One row is the column header.
     app.page_rows = usize::from(inner.height.saturating_sub(1));

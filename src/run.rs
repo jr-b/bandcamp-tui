@@ -185,6 +185,7 @@ async fn event_loop(
         let action = tokio::select! {
             event = input.next() => match event {
                 Some(Ok(Event::Key(key))) => input::action_for(key, input_mode(app)),
+                Some(Ok(Event::Mouse(mouse))) => input::mouse_action(mouse),
                 Some(Ok(Event::Resize(..))) => Some(Action::Resize),
                 Some(Ok(_)) => None,
                 Some(Err(e)) => return Err(e),

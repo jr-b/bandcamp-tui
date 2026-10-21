@@ -55,6 +55,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(frame.area());
 
+    app.pane_areas = crate::app::PaneAreas::default();
     draw_header(frame, header, app);
     if app.screen == Screen::Listening {
         listening::draw(frame, body, app);
@@ -702,6 +703,36 @@ mod tests {
             text.contains("Release 000") && !text.contains("Release 199"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_pane_under_the_pointer() {
+        let wheel = |down, column, row| Action::Wheel { down, column, row };
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 120, 24);
+        let (list, album) = (app.pane_areas.list, app.pane_areas.album);
+        assert!(list.width > 0 && album.width > 0);
+
+        app.update(wheel(true, album.x + 2, album.y + 12));
+        assert_eq!(app.focus, Focus::Album);
+        assert_eq!(app.album_pane.tracks.selected(), Some(1));
+        assert_eq!(app.table.selected(), Some(0), "the list didn't move");
+
+        app.update(wheel(true, list.x + 2, list.y + 3));
+        assert_eq!(app.focus, Focus::Discover);
+        assert_eq!(app.table.selected(), Some(1));
+
+        // Popups take the wheel wherever the pointer is.
+        app.update(Action::OpenSearch);
+        app.update(wheel(true, album.x + 2, album.y + 2));
+        assert_eq!(app.focus, Focus::Discover, "focus stays behind a popup");
+        app.update(Action::ClosePopup);
+        app.update(Action::ShowHelp);
+        render(&mut app, 120, 24);
+        app.update(wheel(true, 0, 0));
+        assert_eq!(app.help.as_ref().map(|h| h.scroll), Some(1));
+        assert!(app.help.is_some(), "the wheel doesn't close help");
     }
 
     #[test]
