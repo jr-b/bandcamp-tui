@@ -23,7 +23,7 @@ use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS
 
 const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
-const TWO_PANE_MIN_WIDTH: u16 = 90;
+const TWO_PANE_MIN_WIDTH: u16 = 80;
 
 /// Below this size the UI doesn't fit; a message says so instead.
 pub const MIN_WIDTH: u16 = 50;
@@ -475,8 +475,8 @@ mod tests {
         app.art_enabled = true;
         show_album(&mut app, fixture_album("album"));
         app.update(Action::FocusAlbum);
-        // 80 columns: single pane. Tall enough that the wide layout would go bigger.
-        render(&mut app, 80, 60);
+        // 79 columns: single pane. Tall enough that the wide layout would go bigger.
+        render(&mut app, 79, 60);
         let art_box = app.album_pane.art_box.unwrap();
         assert!(art_box.rows <= 8, "{art_box:?}");
     }
@@ -568,6 +568,13 @@ mod tests {
         app.query.tags = vec!["electronic".into(), "techno".into(), "ambient".into()];
         let cut = first_row(&render(&mut app, 50, 16));
         assert!(cut.trim_end().ends_with('…'), "{cut}");
+    }
+
+    #[test]
+    fn two_panes_at_80x24() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        insta::assert_snapshot!(render(&mut app, 80, 24).backend());
     }
 
     #[test]

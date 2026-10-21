@@ -10,13 +10,23 @@ use super::{ACCENT, pane};
 use crate::app::{App, Focus, ListSource};
 use crate::format;
 
-const WIDTHS: [Constraint; 5] = [
-    Constraint::Length(1),
-    Constraint::Fill(3),
-    Constraint::Fill(2),
-    Constraint::Length(3),
-    Constraint::Length(4),
-];
+/// Below this inner width the track count column is left out, so titles keep their room.
+const TRACKS_COLUMN_MIN_WIDTH: u16 = 50;
+
+/// Marker, title, artist, (track count,) length.
+fn widths(show_tracks: bool) -> Vec<Constraint> {
+    let mut widths = vec![
+        Constraint::Length(1),
+        Constraint::Fill(3),
+        Constraint::Fill(2),
+        Constraint::Length(3),
+        Constraint::Length(4),
+    ];
+    if !show_tracks {
+        widths.remove(3);
+    }
+    widths
+}
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Discover;
@@ -48,7 +58,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 
     // Same layout the table computes, so text can be cut with an ellipsis instead of mid-word.
-    let columns = Layout::horizontal(WIDTHS)
+    let show_tracks = inner.width >= TRACKS_COLUMN_MIN_WIDTH;
+    let widths = widths(show_tracks);
+    let columns = Layout::horizontal(widths.clone())
         .spacing(1)
         .flex(Flex::Start)
         .split(Rect::new(0, 0, inner.width, 1));
@@ -84,30 +96,31 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         let length = duration.map_or_else(unknown, |d| {
             Span::raw(format!("{}m", (d.as_secs() + 30) / 60))
         });
-        Row::new([
+        let mut cells = vec![
             Cell::from(Span::styled(marker, Style::new().fg(ACCENT))),
             Cell::from(title),
             Cell::from(format::truncate(&item.artist, artist_width))
                 .style(Style::new().fg(Color::Gray)),
-            Cell::from(Line::from(tracks).right_aligned()),
-            Cell::from(Line::from(length).right_aligned()),
-        ])
+        ];
+        if show_tracks {
+            cells.push(Cell::from(Line::from(tracks).right_aligned()));
+        }
+        cells.push(Cell::from(Line::from(length).right_aligned()));
+        Row::new(cells)
     });
-    let header = Row::new([
-        Cell::from(""),
-        Cell::from("Title"),
-        Cell::from("Artist"),
-        Cell::from(Line::from("Trk").right_aligned()),
-        Cell::from(Line::from("Len").right_aligned()),
-    ])
-    .style(Style::new().dim().add_modifier(Modifier::UNDERLINED));
+    let mut header = vec![Cell::from(""), Cell::from("Title"), Cell::from("Artist")];
+    if show_tracks {
+        header.push(Cell::from(Line::from("Trk").right_aligned()));
+    }
+    header.push(Cell::from(Line::from("Len").right_aligned()));
+    let header = Row::new(header).style(Style::new().dim().add_modifier(Modifier::UNDERLINED));
     // The selection stays visible when the other pane has focus, but quieter.
     let highlight = if focused {
         Style::new().add_modifier(Modifier::REVERSED)
     } else {
         Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
     };
-    let table = Table::new(rows, WIDTHS)
+    let table = Table::new(rows, widths)
         .header(header)
         .block(block)
         .row_highlight_style(highlight);
