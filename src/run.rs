@@ -34,6 +34,19 @@ struct Timers {
     message: Option<(Instant, u64)>,
 }
 
+impl Timers {
+    /// A new info message starts its own countdown; errors and no message cancel it.
+    fn track_message(&mut self, app: &App) {
+        match app.expiring_message() {
+            Some(serial) if self.message.is_none_or(|(_, s)| s != serial) => {
+                self.message = Some((Instant::now() + MESSAGE_TIMEOUT, serial));
+            }
+            Some(_) => {}
+            None => self.message = None,
+        }
+    }
+}
+
 pub struct Services {
     pub client: BandcampClient,
     pub player: Option<PlayerHandle>,
@@ -110,6 +123,8 @@ pub async fn run(
     if let Some(note) = art_note {
         app.update(Action::Notice(note.to_owned()));
     }
+    #[cfg(unix)]
+    quit_on_signals(&results_tx);
     let executor = Executor {
         client,
         player: player.clone(),
@@ -134,14 +149,7 @@ pub async fn run(
             let effects = app.after_draw();
             executor.run(effects, &mut timers);
         }
-        // A new info message starts its own countdown; errors and no message cancel it.
-        match app.expiring_message() {
-            Some(serial) if timers.message.is_none_or(|(_, s)| s != serial) => {
-                timers.message = Some((Instant::now() + MESSAGE_TIMEOUT, serial));
-            }
-            Some(_) => {}
-            None => timers.message = None,
-        }
+        timers.track_message(&app);
         let action = tokio::select! {
             event = input.next() => match event {
                 Some(Ok(Event::Key(key))) => input::action_for(key, input_mode(&app)),
@@ -187,6 +195,32 @@ pub async fn run(
         player.stop();
     }
     Ok(())
+}
+
+/// SIGTERM, SIGHUP (terminal closed) and SIGINT (`kill -INT`; ctrl-c is a key in raw mode)
+/// quit through the normal path, so the terminal is restored and playback stops. By default
+/// they'd kill the process with the terminal still in raw mode.
+#[cfg(unix)]
+fn quit_on_signals(tx: &UnboundedSender<Action>) {
+    use tokio::signal::unix::{SignalKind, signal};
+    for (kind, name) in [
+        (SignalKind::terminate(), "SIGTERM"),
+        (SignalKind::hangup(), "SIGHUP"),
+        (SignalKind::interrupt(), "SIGINT"),
+    ] {
+        match signal(kind) {
+            Ok(mut signals) => {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    if signals.recv().await.is_some() {
+                        tracing::info!(signal = name, "quitting");
+                        let _ = tx.send(Action::Quit);
+                    }
+                });
+            }
+            Err(e) => tracing::warn!(signal = name, error = %e, "can't handle signal"),
+        }
+    }
 }
 
 async fn sleep_until(when: Option<Instant>) {
