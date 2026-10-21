@@ -172,16 +172,13 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         left.push(Span::styled(part, Style::new().bold()));
     }
     let left = Line::from(left);
-    let mut right = if app.discover.total > 0 {
-        let mut text = format!("{} releases ", format::thousands(app.discover.total));
-        if app.source != ListSource::Discover {
-            text.push_str("· esc back ");
-        }
-        Line::from(text).dim()
-    } else {
+    // The list's title shows the position and count; only the way back goes here.
+    let mut right = if app.source == ListSource::Discover {
         Line::default()
+    } else {
+        Line::from("esc back ").dim()
     };
-    // The filters matter more than the count: drop the count rather than let them touch.
+    // The filters matter more than the hint: drop it rather than let them touch.
     let width = usize::from(area.width);
     if left.width() + 1 + right.width() > width {
         right = Line::default();
@@ -558,12 +555,9 @@ mod tests {
     }
 
     #[test]
-    fn header_drops_the_count_before_the_filters_touch_it() {
+    fn header_cuts_long_filters_with_an_ellipsis() {
         let mut app = app_with_page();
-        let wide = first_row(&render(&mut app, 80, 16));
-        assert!(wide.contains("best-selling") && wide.contains("1,947,113 releases"));
         let narrow = first_row(&render(&mut app, 60, 16));
-        assert!(!narrow.contains("releases"), "{narrow}");
         assert!(narrow.contains("best-selling"), "{narrow}");
         app.query.tags = vec!["electronic".into(), "techno".into(), "ambient".into()];
         let cut = first_row(&render(&mut app, 50, 16));

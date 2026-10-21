@@ -2,7 +2,7 @@
 source: src/ui/mod.rs
 expression: terminal.backend()
 ---
-" bandcamp  Discover · electronic · best-selling                                  1,947,113 releases "
+" bandcamp  Discover · electronic · best-selling                                                     "
 "┌ Listening ──────────────────────────────────────────────────────────────────── i about  v browse ┐"
 "│                                                                                                  │"
 "│                                                                                                  │"

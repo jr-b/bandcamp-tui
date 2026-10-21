@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: terminal.backend()
 ---
-" bandcamp  Discover · electronic · best-selling                                                                                              1,947,113 releases "
-"┌ Discover ────────────────────────────────────────────────────────────────── loading… ┐┌ Album ────────────────────────────────────────────────────── i about ┐"
+" bandcamp  Discover · electronic · best-selling                                                                                                                 "
+"┌ Discover · 1/1,947,113 ──────────────────────────────────────────────────── loading… ┐┌ Album ────────────────────────────────────────────────────── i about ┐"
 "│  Title                                        Artist                         Trk  Len││▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ Ocean Company                        │"
 "│  Ocean Company                                Ocean Company                   10  38m││▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ by Ocean Company                     │"
 "│  Pete Cannon - From The Manor House (N4LP001) N4 Records                      12  63m││▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄ on Hotel Pools                       │"

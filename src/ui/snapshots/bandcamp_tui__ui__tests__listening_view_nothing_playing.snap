@@ -2,7 +2,7 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 100, 20).backend()"
 ---
-" bandcamp  Discover · electronic · best-selling                                  1,947,113 releases "
+" bandcamp  Discover · electronic · best-selling                                                     "
 "┌ Listening ──────────────────────────────────────────────────────────────────── i about  v browse ┐"
 "│                                                                                                  │"
 "│                                                                                                  │"

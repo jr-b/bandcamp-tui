@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 100, 36).backend()"
 ---
-" bandcamp  Discover┌ Keys ───────────────────────────────────────────────────────┐,947,113 releases "
-"┌ Discover ────────│ Browse                                                      │─────────────────┐"
+" bandcamp  Discover┌ Keys ───────────────────────────────────────────────────────┐                  "
+"┌ Discover · 1/1,94│ Browse                                                      │─────────────────┐"
 "│  Title           │   ↑↓  j k           move                                    │                 │"
 "│  Ocean Company   │   g G  Home End     top / bottom                            │l Pools          │"
 "│  Pete Cannon - Fr│   PgUp PgDn  ^u ^d  page                                    │tland, Oregon    │"

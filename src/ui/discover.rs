@@ -30,11 +30,23 @@ fn widths(show_tracks: bool) -> Vec<Constraint> {
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Discover;
-    let title = match &app.source {
+    let mut title = match &app.source {
         ListSource::Discover => "Discover".to_owned(),
         ListSource::Search(_) => "Search results".to_owned(),
         ListSource::Artist(name) => name.clone(),
     };
+    if let Some(selected) = app
+        .table
+        .selected()
+        .filter(|_| !app.discover.items.is_empty())
+    {
+        let total = app.discover.total.max(app.discover.items.len() as u64);
+        title = format!(
+            "{title} · {}/{}",
+            format::thousands(selected as u64 + 1),
+            format::thousands(total)
+        );
+    }
     let mut block = pane(&title, focused);
     if app.discover.loading {
         block = block.title(Line::from(" loading… ").right_aligned().fg(ACCENT));

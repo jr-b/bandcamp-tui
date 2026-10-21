@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: terminal.backend()
 ---
-" bandcamp  Discover · electronic · best-selling                                                      1,947,113 releases "
-"┌ Discover ──────────────────────────────────────────── loading… ┐┌ Album ──────────────────────────────────── i about ┐"
+" bandcamp  Discover · electronic · best-selling                                                                         "
+"┌ Discover · 1/1,947,113 ────────────────────────────── loading… ┐┌ Album ──────────────────────────────────── i about ┐"
 "│  Title                           Artist                Trk  Len││Jason Walker's Gravity Amplifiers                   │"
 "│  Ocean Company                   Ocean Company          10  38m││by Jason Walker's Gravity Amplifiers · on Ripple Mu…│"
 "│  Pete Cannon - From The Manor H… N4 Records             12  63m││9 tracks · 52 min · out 20 Nov 2026 · San Ramon, Ca…│"

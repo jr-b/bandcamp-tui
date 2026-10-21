@@ -2,7 +2,7 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 80, 24).backend()"
 ---
-" bandcamp┌ Keys ───────────────────────────────────────────────────────┐eleases "
+" bandcamp┌ Keys ───────────────────────────────────────────────────────┐        "
 "┌ Discove│ Browse                                                      │───────┐"
 "│  Title │   ↑↓  j k           move                                    │       │"
 "│  Ocean │   g G  Home End     top / bottom                            │ Pools │"

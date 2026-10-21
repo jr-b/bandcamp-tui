@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 140, 30).backend()"
 ---
-" bandcamp  Discover · electronic · best-selling                                                                          1,947,113 releases "
-"┌ Discover ─────────────────────────────────────────────────────── loading… ┐┌ Album ──────────────────────────────────────────────────────┐"
+" bandcamp  Discover · electronic · best-selling                                                                                             "
+"┌ Discover · 1/1,947,113 ───────────────────────────────────────── loading… ┐┌ Album ──────────────────────────────────────────────────────┐"
 "│  Title                                  Artist                    Trk  Len││Ocean Company                                                │"
 "│  Ocean Company                          Ocean Company              10  38m││by Ocean Company · on Hotel Pools                            │"
 "│  Pete Canno┌ Keys ──────────────────────────────────────────────────────────────────────────────────────────────────────────┐            │"

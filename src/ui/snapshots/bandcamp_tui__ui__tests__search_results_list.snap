@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 110, 24).backend()"
 ---
-" bandcamp  Search · “aphex twin”                                                        6 releases · esc back "
-"┌ Search results ───────────────────────────────────────────┐┌ Album ────────────────────────────────────────┐"
+" bandcamp  Search · “aphex twin”                                                                     esc back "
+"┌ Search results · 1/6 ─────────────────────────────────────┐┌ Album ────────────────────────────────────────┐"
 "│  Title                        Artist              Trk  Len││Drukqs                                         │"
 "│  Drukqs                       Aphex Twin            –    –││by Aphex Twin                                  │"
 "│  Syro                         Aphex Twin            –    –││                                               │"
