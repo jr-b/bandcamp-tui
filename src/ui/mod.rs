@@ -11,10 +11,10 @@ mod queue;
 mod search;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
@@ -25,7 +25,19 @@ const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
 const TWO_PANE_MIN_WIDTH: u16 = 90;
 
+/// Below this size the UI doesn't fit; a message says so instead.
+pub const MIN_WIDTH: u16 = 50;
+pub const MIN_HEIGHT: u16 = 12;
+
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    let area = frame.area();
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        // Nothing shows a cover: don't download or encode one for a stale layout.
+        app.album_pane.art_box = None;
+        app.listening.art_box = None;
+        draw_too_small(frame, area);
+        return;
+    }
     // The listening view shows the track and progress itself: no now-playing bar.
     let bar_rows = if app.screen == Screen::Listening {
         0
@@ -71,6 +83,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if let Some(view) = app.help.as_mut() {
         help::draw(frame, frame.area(), view);
     }
+}
+
+fn draw_too_small(frame: &mut Frame, area: Rect) {
+    let text = Text::from(vec![
+        Line::from("Terminal too small").bold(),
+        Line::from(format!(
+            "{}×{}, needs {MIN_WIDTH}×{MIN_HEIGHT}",
+            area.width, area.height
+        ))
+        .dim(),
+        Line::from("q quits").dim(),
+    ]);
+    let paragraph = Paragraph::new(text).centered().wrap(Wrap { trim: true });
+    let height = u16::try_from(paragraph.line_count(area.width))
+        .unwrap_or(u16::MAX)
+        .min(area.height);
+    let [middle] = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .areas(area);
+    frame.render_widget(paragraph, middle);
 }
 
 /// A bordered pane, highlighted when focused.
@@ -533,8 +565,19 @@ mod tests {
         let narrow = first_row(&render(&mut app, 60, 16));
         assert!(!narrow.contains("releases"), "{narrow}");
         assert!(narrow.contains("best-selling"), "{narrow}");
-        let tiny = first_row(&render(&mut app, 30, 16));
-        assert!(tiny.trim_end().ends_with('…'), "{tiny}");
+        app.query.tags = vec!["electronic".into(), "techno".into(), "ambient".into()];
+        let cut = first_row(&render(&mut app, 50, 16));
+        assert!(cut.trim_end().ends_with('…'), "{cut}");
+    }
+
+    #[test]
+    fn too_small_says_so() {
+        let mut app = app_with_page();
+        insta::assert_snapshot!(render(&mut app, 49, 12).backend());
+        let ok = render(&mut app, 50, 12);
+        assert!(first_row(&ok).contains("bandcamp"));
+        let short = render(&mut app, 80, 11);
+        assert!(!first_row(&short).contains("bandcamp"));
     }
 
     #[test]
@@ -685,7 +728,7 @@ mod tests {
         app.query.tags = vec!["electronic".into(), "techno".into()];
         app.query.time_facet_id = Some(1);
         app.query.geoname_id = 2_950_159;
-        let terminal = render(&mut app, 120, 10);
+        let terminal = render(&mut app, 120, 12);
         let first_line: String = (0..120)
             .map(|x| terminal.backend().buffer()[(x, 0)].symbol().to_owned())
             .collect();
