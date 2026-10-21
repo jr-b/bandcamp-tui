@@ -3,8 +3,8 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Cell, Row, Table};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
 
 use super::{ACCENT, pane};
 use crate::app::{App, Focus, ListSource};
@@ -34,18 +34,16 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     app.page_rows = usize::from(inner.height.saturating_sub(1));
 
     if app.discover.items.is_empty() {
-        let text = match (&app.source, app.discover.loading) {
-            (ListSource::Discover, true) => "Loading Discover…",
-            (ListSource::Discover, false) => "No releases match these filters.",
-            (_, true) => "Loading releases…",
-            (_, false) => "No releases.",
-        };
         frame.render_widget(block, area);
-        let y = inner.y + inner.height / 2;
-        frame.render_widget(
-            Line::from(text).dim().centered(),
-            Rect::new(inner.x, y, inner.width, 1),
-        );
+        let text = empty_text(app);
+        let paragraph = Paragraph::new(text).centered().wrap(Wrap { trim: true });
+        let height = u16::try_from(paragraph.line_count(inner.width))
+            .unwrap_or(u16::MAX)
+            .min(inner.height);
+        let [middle] = Layout::vertical([Constraint::Length(height)])
+            .flex(Flex::Center)
+            .areas(inner);
+        frame.render_widget(paragraph, middle);
         return;
     }
 
@@ -114,4 +112,32 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         .block(block)
         .row_highlight_style(highlight);
     frame.render_stateful_widget(table, area, &mut app.table);
+}
+
+/// What the list says while it has no releases: loading, failed, or really empty.
+fn empty_text(app: &App) -> Text<'static> {
+    let discover = app.source == ListSource::Discover;
+    if let Some(error) = &app
+        .discover
+        .error
+        .as_ref()
+        .filter(|_| !app.discover.loading)
+    {
+        let (what, next) = if discover {
+            ("Discover", "Press r to retry.")
+        } else {
+            ("these releases", "Press esc to go back to Discover.")
+        };
+        return Text::from(vec![
+            Line::from(format!("Couldn't load {what}: {error}")).fg(Color::Red),
+            Line::from(next).dim(),
+        ]);
+    }
+    let text = match (discover, app.discover.loading) {
+        (true, true) => "Loading Discover…",
+        (true, false) => "No releases match these filters.",
+        (false, true) => "Loading releases…",
+        (false, false) => "No releases.",
+    };
+    Text::from(Line::from(text).dim())
 }

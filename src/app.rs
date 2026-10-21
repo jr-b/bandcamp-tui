@@ -227,6 +227,8 @@ pub struct DiscoverList {
     pub total: u64,
     next_cursor: Option<Cursor>,
     pub loading: bool,
+    /// Why the last load failed, shown in place of the list while it's empty.
+    pub error: Option<String>,
     /// Bumped on every reload so responses to outdated requests are ignored.
     generation: u64,
 }
@@ -765,6 +767,7 @@ impl App {
         self.discover.loading = false;
         match result {
             Ok(page) => {
+                self.discover.error = None;
                 let room = MAX_ITEMS.saturating_sub(self.discover.items.len());
                 self.discover
                     .items
@@ -787,6 +790,7 @@ impl App {
             Err(e) => {
                 self.autoplay_after = None;
                 self.error(format!("Couldn't load Discover: {e}"));
+                self.discover.error = Some(e);
                 vec![]
             }
         }
@@ -1670,6 +1674,7 @@ impl App {
             Err(e) => {
                 self.discover.loading = false;
                 self.error(format!("Couldn't load artist: {e}"));
+                self.discover.error = Some(e);
                 vec![]
             }
         }
@@ -1696,6 +1701,7 @@ impl App {
             items,
             next_cursor: None,
             loading,
+            error: None,
             generation,
         };
         let selected = selected.or((!self.discover.items.is_empty()).then_some(0));

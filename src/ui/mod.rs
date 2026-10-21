@@ -492,6 +492,24 @@ mod tests {
     }
 
     #[test]
+    fn discover_error_is_shown_in_the_list_until_retried() {
+        let (mut app, effects) = App::new(DiscoverQuery::default(), true);
+        let Some(Effect::FetchDiscover { generation, .. }) = effects.into_iter().next() else {
+            panic!("no initial fetch");
+        };
+        app.update(Action::DiscoverLoaded {
+            generation,
+            result: Err("error sending request: connection refused".into()),
+        });
+        // A keypress clears the footer message; the list still says what went wrong.
+        app.update(Action::Down);
+        assert!(app.message.is_none());
+        insta::assert_snapshot!(render(&mut app, 80, 14).backend());
+        app.update(Action::Refresh);
+        assert!(app.discover.error.is_none(), "retrying clears the error");
+    }
+
+    #[test]
     fn help_scrolls_at_80x24() {
         let mut app = app_with_page();
         app.update(Action::ShowHelp);
