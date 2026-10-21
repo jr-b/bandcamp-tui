@@ -5,9 +5,8 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
-use unicode_width::UnicodeWidthStr;
 
-use super::{ACCENT, pane};
+use super::{ACCENT, fit, pane};
 use crate::app::{AlbumView, App, Focus};
 use crate::art::{Art, ArtBox};
 use crate::bandcamp::{Album, DiscoverItem};
@@ -219,27 +218,6 @@ fn summary_from_item(item: &DiscoverItem, width: u16) -> Text<'static> {
         fit(Line::from(by), width),
         fit(Line::from(facts.join(" · ")).dim(), width),
     ])
-}
-
-/// Truncates a styled line to `width` cells, keeping span styles.
-fn fit(line: Line<'static>, width: usize) -> Line<'static> {
-    if line.width() <= width {
-        return line;
-    }
-    let mut remaining = width;
-    let mut spans = Vec::new();
-    for span in line.spans {
-        let w = span.content.width();
-        if w < remaining {
-            remaining -= w;
-            spans.push(span);
-        } else {
-            let cut = format::truncate(&span.content, remaining).into_owned();
-            spans.push(Span::styled(cut, span.style));
-            break;
-        }
-    }
-    Line::from(spans).style(line.style)
 }
 
 /// Where (and whether) to draw the cover: `None` for text-only; otherwise its box and the

@@ -2,7 +2,7 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 50, 14).backend()"
 ---
-" bandcamp  Discover · electroni1,947,113 releases "
+" bandcamp  Discover · electronic · best-selling   "
 "┌ Listening ────────────────── i about  v browse ┐"
 "│                                                │"
 "│             … Joyride (buffering)              │"

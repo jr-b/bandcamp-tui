@@ -85,6 +85,27 @@ fn pane(title: &str, focused: bool) -> Block<'static> {
     }
 }
 
+/// Truncates a styled line to `width` cells, keeping span styles.
+pub(super) fn fit(line: Line<'static>, width: usize) -> Line<'static> {
+    if line.width() <= width {
+        return line;
+    }
+    let mut remaining = width;
+    let mut spans = Vec::new();
+    for span in line.spans {
+        let w = span.width();
+        if w < remaining {
+            remaining -= w;
+            spans.push(span);
+        } else {
+            let cut = format::truncate(&span.content, remaining).into_owned();
+            spans.push(Span::styled(cut, span.style));
+            break;
+        }
+    }
+    Line::from(spans).style(line.style)
+}
+
 fn slice_label(slice: Slice) -> &'static str {
     match slice {
         Slice::Top => "best-selling",
@@ -119,7 +140,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         left.push(Span::styled(part, Style::new().bold()));
     }
     let left = Line::from(left);
-    let right = if app.discover.total > 0 {
+    let mut right = if app.discover.total > 0 {
         let mut text = format!("{} releases ", format::thousands(app.discover.total));
         if app.source != ListSource::Discover {
             text.push_str("· esc back ");
@@ -128,9 +149,15 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         Line::default()
     };
-    let width = u16::try_from(right.width()).unwrap_or(u16::MAX);
-    let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(width)]).areas(area);
-    frame.render_widget(left, l);
+    // The filters matter more than the count: drop the count rather than let them touch.
+    let width = usize::from(area.width);
+    if left.width() + 1 + right.width() > width {
+        right = Line::default();
+    }
+    let right_width = u16::try_from(right.width()).unwrap_or(u16::MAX);
+    let [l, r] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(right_width)]).areas(area);
+    frame.render_widget(fit(left, usize::from(l.width)), l);
     frame.render_widget(right, r);
 }
 
@@ -489,6 +516,25 @@ mod tests {
         let mut app = app_with_page();
         app.update(Action::ShowHelp);
         insta::assert_snapshot!(render(&mut app, 100, 36).backend());
+    }
+
+    fn first_row(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn header_drops_the_count_before_the_filters_touch_it() {
+        let mut app = app_with_page();
+        let wide = first_row(&render(&mut app, 80, 16));
+        assert!(wide.contains("best-selling") && wide.contains("1,947,113 releases"));
+        let narrow = first_row(&render(&mut app, 60, 16));
+        assert!(!narrow.contains("releases"), "{narrow}");
+        assert!(narrow.contains("best-selling"), "{narrow}");
+        let tiny = first_row(&render(&mut app, 30, 16));
+        assert!(tiny.trim_end().ends_with('…'), "{tiny}");
     }
 
     #[test]
