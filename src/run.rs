@@ -4,9 +4,9 @@
 
 use std::time::Duration;
 
-use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
 use ratatui::DefaultTerminal;
+use ratatui::crossterm::event::{Event, EventStream};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::time::{Instant, MissedTickBehavior};
 

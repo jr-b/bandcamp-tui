@@ -159,7 +159,7 @@ fn query_picker(mode: AlbumArt) -> Option<Picker> {
     // that thread stays blocked reading stdin and swallows every key typed afterwards. So
     // first check, through crossterm's own input reader (which the app keeps using), that the
     // terminal answers queries at all. (Fixed upstream in ratatui-image 12; drop this then.)
-    let answers = crossterm::terminal::supports_keyboard_enhancement().is_ok();
+    let answers = ratatui::crossterm::terminal::supports_keyboard_enhancement().is_ok();
     let mut picker = if answers {
         match Picker::from_query_stdio() {
             Ok(picker) => picker,

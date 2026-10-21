@@ -1,6 +1,6 @@
 //! Key bindings. Vim-style and arrow keys both work.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::Action;
 use crate::picker::PickerKind;
