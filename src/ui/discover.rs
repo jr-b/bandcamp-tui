@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use super::pane;
@@ -69,7 +69,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         (usize::from(columns[1].width), usize::from(columns[2].width));
 
     let playing_id = app.now_playing.as_ref().map(|a| a.id);
-    let rows = app.discover.items.iter().map(|item| {
+    // Only the rows on screen are built: the list can hold a thousand releases.
+    let (window, mut state) = visible_window(app);
+    let rows = app.discover.items[window].iter().map(|item| {
         let marker = if Some(item.id) == playing_id {
             "♪"
         } else if app.queue.contains_release(item.id) {
@@ -124,7 +126,26 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         .header(header)
         .block(block)
         .row_highlight_style(highlight);
-    frame.render_stateful_widget(table, area, &mut app.table);
+    frame.render_stateful_widget(table, area, &mut state);
+}
+
+/// The rows to draw, and a table state for just those rows. Scrolls the way ratatui would:
+/// the offset only moves when the selection would leave the screen. Records the new offset.
+fn visible_window(app: &mut App) -> (std::ops::Range<usize>, TableState) {
+    let len = app.discover.items.len();
+    let rows = app.page_rows.max(1);
+    let mut offset = app.table.offset().min(len.saturating_sub(rows));
+    let selected = app.table.selected().map(|s| s.min(len.saturating_sub(1)));
+    if let Some(s) = selected {
+        if s < offset {
+            offset = s;
+        } else if s >= offset + rows {
+            offset = s + 1 - rows;
+        }
+    }
+    *app.table.offset_mut() = offset;
+    let state = TableState::default().with_selected(selected.map(|s| s - offset));
+    (offset..(offset + rows).min(len), state)
 }
 
 /// What the list shows, and where the selection is in it: `Discover · 12/1,947,113`.

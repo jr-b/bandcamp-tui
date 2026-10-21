@@ -660,6 +660,50 @@ mod tests {
         }
     }
 
+    fn screen_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn long_lists_scroll_with_the_selection() {
+        let mut app = app_with_page();
+        let template = app.discover.items[0].clone();
+        app.discover.items = (0..200)
+            .map(|i| crate::bandcamp::DiscoverItem {
+                id: crate::bandcamp::ItemId(i + 1),
+                title: format!("Release {i:03}"),
+                ..template.clone()
+            })
+            .collect();
+        app.update(Action::Bottom);
+        let text = screen_text(&render(&mut app, 80, 20));
+        assert!(
+            text.contains("Release 199") && !text.contains("Release 000"),
+            "{text}"
+        );
+        assert!(text.contains("200/"), "{text}");
+        let offset = app.table.offset();
+        // Moving within the screen keeps the offset; moving past it scrolls.
+        app.update(Action::Up);
+        render(&mut app, 80, 20);
+        assert_eq!(app.table.offset(), offset);
+        app.update(Action::Top);
+        let text = screen_text(&render(&mut app, 80, 20));
+        assert_eq!(app.table.offset(), 0);
+        assert!(
+            text.contains("Release 000") && !text.contains("Release 199"),
+            "{text}"
+        );
+    }
+
     #[test]
     fn two_panes_at_80x24() {
         let mut app = app_with_page();
