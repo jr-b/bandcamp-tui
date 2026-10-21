@@ -40,7 +40,7 @@ pub struct ArtBox {
 }
 
 /// How big the cover can be in a pane of `width`×`height` cells: as large as possible while
-/// the text beside it and the tracklist below keep their room, snapped to [`ROW_STEPS`].
+/// the text beside it and the tracklist below keep their room, snapped to `ROW_STEPS`.
 /// `None` when even the smallest step doesn't fit (then the pane is text-only).
 #[must_use]
 pub fn layout(width: u16, height: u16, font: FontSize, compact: bool) -> Option<ArtBox> {
@@ -63,7 +63,7 @@ pub fn layout(width: u16, height: u16, font: FontSize, compact: bool) -> Option<
 }
 
 /// How big the cover can be in the listening view of `width`×`height` cells: as large as
-/// possible with [`LISTENING_TEXT_ROWS`] left underneath, snapped to [`LISTENING_ROW_STEPS`].
+/// possible with [`LISTENING_TEXT_ROWS`] left underneath, snapped to `LISTENING_ROW_STEPS`.
 #[must_use]
 pub fn listening_layout(width: u16, height: u16, font: FontSize) -> Option<ArtBox> {
     let (cell_w, cell_h) = (u32::from(font.width.max(1)), u32::from(font.height.max(1)));
