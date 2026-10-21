@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::app::Action;
 use crate::picker::PickerKind;
+use crate::text_input::Edit;
 
 /// One line of the key help, in display order: `(keys, what they do)`.
 /// Ordered by importance: narrow terminals show only the first few.
@@ -62,6 +63,7 @@ pub const PICKER_HINTS: &[(&str, &str)] = &[
     ("↑↓", "move"),
     ("⏎", "select"),
     ("esc", "cancel"),
+    ("ctrl-w", "delete word"),
     ("ctrl-u", "clear"),
 ];
 
@@ -261,9 +263,14 @@ fn listening_action(key: KeyEvent) -> Option<Action> {
 
 fn picker_action(key: KeyEvent) -> Option<Action> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
     let action = match key.code {
         KeyCode::Char('c') if ctrl => Action::Quit,
-        KeyCode::Char('u') if ctrl => Action::ClearInput,
+        KeyCode::Char('u') if ctrl => Action::Edit(Edit::Clear),
+        KeyCode::Char('w') if ctrl => Action::Edit(Edit::DeleteWord),
+        KeyCode::Backspace if alt => Action::Edit(Edit::DeleteWord),
+        KeyCode::Char('a') if ctrl => Action::Edit(Edit::Home),
+        KeyCode::Char('e') if ctrl => Action::Edit(Edit::End),
         KeyCode::Char('p' | 'k') if ctrl => Action::Up,
         KeyCode::Char('n' | 'j') if ctrl => Action::Down,
         KeyCode::Esc => Action::ClosePopup,
@@ -272,8 +279,13 @@ fn picker_action(key: KeyEvent) -> Option<Action> {
         KeyCode::Down => Action::Down,
         KeyCode::PageUp => Action::PageUp,
         KeyCode::PageDown => Action::PageDown,
-        KeyCode::Backspace => Action::Backspace,
-        KeyCode::Char(c) if !ctrl => Action::TypeChar(c),
+        KeyCode::Left => Action::Edit(Edit::Left),
+        KeyCode::Right => Action::Edit(Edit::Right),
+        KeyCode::Home => Action::Edit(Edit::Home),
+        KeyCode::End => Action::Edit(Edit::End),
+        KeyCode::Backspace => Action::Edit(Edit::Backspace),
+        KeyCode::Delete => Action::Edit(Edit::Delete),
+        KeyCode::Char(c) if !ctrl => Action::Edit(Edit::Insert(c)),
         _ => return None,
     };
     Some(action)
@@ -295,11 +307,11 @@ mod tests {
     fn picker_takes_letters_as_text() {
         assert_eq!(
             press_in_picker(KeyCode::Char('q')),
-            Some(Action::TypeChar('q'))
+            Some(Action::Edit(Edit::Insert('q')))
         );
         assert_eq!(
             press_in_picker(KeyCode::Char('j')),
-            Some(Action::TypeChar('j'))
+            Some(Action::Edit(Edit::Insert('j')))
         );
         assert_eq!(press_in_picker(KeyCode::Esc), Some(Action::ClosePopup));
         assert_eq!(press_in_picker(KeyCode::Enter), Some(Action::Play));
@@ -312,6 +324,31 @@ mod tests {
         );
         // Esc never quits: outside popups it goes back to Discover.
         assert_eq!(press(KeyCode::Esc), Some(Action::BackToDiscover));
+    }
+
+    #[test]
+    fn picker_text_editing_keys() {
+        let key = |code, modifiers| action_for(KeyEvent::new(code, modifiers), Mode::Picker);
+        let edit = |e| Some(Action::Edit(e));
+        assert_eq!(key(KeyCode::Left, KeyModifiers::NONE), edit(Edit::Left));
+        assert_eq!(key(KeyCode::End, KeyModifiers::NONE), edit(Edit::End));
+        assert_eq!(key(KeyCode::Delete, KeyModifiers::NONE), edit(Edit::Delete));
+        assert_eq!(
+            key(KeyCode::Char('w'), KeyModifiers::CONTROL),
+            edit(Edit::DeleteWord)
+        );
+        assert_eq!(
+            key(KeyCode::Backspace, KeyModifiers::ALT),
+            edit(Edit::DeleteWord)
+        );
+        assert_eq!(
+            key(KeyCode::Char('a'), KeyModifiers::CONTROL),
+            edit(Edit::Home)
+        );
+        assert_eq!(
+            key(KeyCode::Char('u'), KeyModifiers::CONTROL),
+            edit(Edit::Clear)
+        );
     }
 
     #[test]

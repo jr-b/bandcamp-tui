@@ -19,6 +19,7 @@ use crate::picker::{Picker, PickerKind};
 use crate::player::{PlaybackState, PlayerEvent, QueueTrack, Status};
 use crate::queue::{Queue, QueueEntry};
 use crate::settings::Settings;
+use crate::text_input::{Edit, TextInput};
 
 /// Fetch the next page when the selection gets this close to the end of the list.
 const LOAD_MORE_THRESHOLD: usize = 10;
@@ -105,10 +106,8 @@ pub enum Action {
     OpenPicker(PickerKind),
     /// Close the picker without changing anything.
     ClosePopup,
-    /// Text typed into the picker's search.
-    TypeChar(char),
-    Backspace,
-    ClearInput,
+    /// An edit to the picker's or search box's text.
+    Edit(Edit),
     /// Terminal resized; just redraw.
     Resize,
     /// The info message with this serial has been shown long enough.
@@ -264,7 +263,7 @@ pub enum ListSource {
 /// The `/` search popup. Kept while closed, so reopening shows the last search.
 #[derive(Debug, Default)]
 pub struct SearchBox {
-    pub query: String,
+    pub query: TextInput,
     pub results: Vec<SearchResult>,
     pub list: ListState,
     pub loading: bool,
@@ -603,9 +602,7 @@ impl App {
             // only need a redraw.
             Action::ClosePopup
             | Action::CloseHelp
-            | Action::TypeChar(_)
-            | Action::Backspace
-            | Action::ClearInput
+            | Action::Edit(_)
             | Action::Resize
             | Action::QueueRemove
             | Action::QueueMoveUp
@@ -707,9 +704,7 @@ impl App {
             Action::PageDown => picker.move_by(10),
             Action::Top => picker.move_by(isize::MIN),
             Action::Bottom => picker.move_by(isize::MAX),
-            Action::TypeChar(c) => picker.push(*c),
-            Action::Backspace => picker.backspace(),
-            Action::ClearInput => picker.clear(),
+            Action::Edit(edit) => picker.edit(*edit),
             Action::ClosePopup => self.picker = None,
             Action::Play => {
                 let choice = picker.selected().cloned();
@@ -1569,17 +1564,7 @@ impl App {
             Action::Down => move_list(&mut self.search.list, len, 1),
             Action::PageUp => move_list(&mut self.search.list, len, -10),
             Action::PageDown => move_list(&mut self.search.list, len, 10),
-            Action::TypeChar(c) => {
-                self.search.query.push(*c);
-                edited = true;
-            }
-            Action::Backspace => {
-                edited = self.search.query.pop().is_some();
-            }
-            Action::ClearInput => {
-                edited = !self.search.query.is_empty();
-                self.search.query.clear();
-            }
+            Action::Edit(edit) => edited = self.search.query.apply(*edit),
             Action::ClosePopup => self.search_open = false,
             Action::Play => return Some(self.open_search_result()),
             Action::Quit => return None,
@@ -1591,7 +1576,7 @@ impl App {
         }
         self.search.generation += 1;
         self.search.error = None;
-        if self.search.query.trim().is_empty() {
+        if self.search.query.as_str().trim().is_empty() {
             self.search.results.clear();
             self.search.loading = false;
             return Some(vec![]);
@@ -1601,7 +1586,7 @@ impl App {
     }
 
     fn search_due(&mut self, generation: u64) -> Vec<Effect> {
-        let query = self.search.query.trim();
+        let query = self.search.query.as_str().trim();
         if generation != self.search.generation || query.is_empty() {
             return vec![];
         }
@@ -1653,7 +1638,7 @@ impl App {
                     })
                     .collect();
                 let index = releases.iter().position(|r| r.id == item.id);
-                let query = self.search.query.trim().to_owned();
+                let query = self.search.query.as_str().trim().to_owned();
                 self.show_list(ListSource::Search(query), releases, index, false)
             }
             SearchResult::Artist(artist) => {
@@ -2328,7 +2313,7 @@ mod tests {
         app.update(Action::Down);
         assert_eq!(app.table.selected(), Some(0));
         for c in "techno".chars() {
-            app.update(Action::TypeChar(c));
+            app.update(Action::Edit(Edit::Insert(c)));
         }
         let effects = app.update(Action::Play);
         assert!(app.picker.is_none());
@@ -2346,7 +2331,7 @@ mod tests {
         app.update(Action::OpenPicker(PickerKind::Time));
         assert_eq!(app.update(Action::Play), [], "Any time is already selected");
         app.update(Action::OpenPicker(PickerKind::Location));
-        app.update(Action::TypeChar('b'));
+        app.update(Action::Edit(Edit::Insert('b')));
         assert_eq!(app.update(Action::ClosePopup), []);
         assert!(app.picker.is_none());
         assert_eq!(app.query.geoname_id, 0);
@@ -2808,7 +2793,7 @@ mod tests {
         app.update(Action::OpenSearch);
         let mut generation = 0;
         for c in text.chars() {
-            let effects = app.update(Action::TypeChar(c));
+            let effects = app.update(Action::Edit(Edit::Insert(c)));
             let [Effect::DebounceSearch(g)] = effects[..] else {
                 panic!("{effects:?}");
             };
@@ -2829,10 +2814,12 @@ mod tests {
     fn search_is_debounced_and_ignores_stale_results() {
         let mut app = loaded();
         app.update(Action::OpenSearch);
-        let [Effect::DebounceSearch(first)] = app.update(Action::TypeChar('a'))[..] else {
+        let [Effect::DebounceSearch(first)] = app.update(Action::Edit(Edit::Insert('a')))[..]
+        else {
             panic!();
         };
-        let [Effect::DebounceSearch(second)] = app.update(Action::TypeChar('p'))[..] else {
+        let [Effect::DebounceSearch(second)] = app.update(Action::Edit(Edit::Insert('p')))[..]
+        else {
             panic!();
         };
         assert_eq!(
@@ -2852,8 +2839,8 @@ mod tests {
             [Effect::FetchSearch { .. }]
         ));
         // Keys go to the box: `j` is text, not "move down".
-        app.update(Action::TypeChar('j'));
-        assert_eq!(app.search.query, "apj");
+        app.update(Action::Edit(Edit::Insert('j')));
+        assert_eq!(app.search.query.as_str(), "apj");
         assert_eq!(app.table.selected(), Some(0));
     }
 
@@ -2955,9 +2942,9 @@ mod tests {
             "closing doesn't change the list"
         );
         app.update(Action::OpenSearch);
-        assert_eq!(app.search.query, "aphex twin");
+        assert_eq!(app.search.query.as_str(), "aphex twin");
         assert_eq!(app.search.results.len(), 7);
-        app.update(Action::ClearInput);
+        app.update(Action::Edit(Edit::Clear));
         assert_eq!(app.search.results, []);
     }
 

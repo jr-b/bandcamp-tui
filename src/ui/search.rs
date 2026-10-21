@@ -38,20 +38,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
         Constraint::Min(0),
     ])
     .areas(inner);
-    let prompt = Span::styled("› ", Style::new().fg(ACCENT));
-    let line = if search.query.is_empty() {
-        Line::from(vec![
-            prompt,
-            Span::styled("artist, album or track", Style::new().dim()),
-        ])
-    } else {
-        Line::from(vec![
-            prompt,
-            Span::raw(search.query.as_str()),
-            Span::styled("▏", Style::new().fg(ACCENT)),
-        ])
-    };
-    frame.render_widget(line, input);
+    super::draw_input(frame, input, &search.query, "artist, album or track");
     frame.render_widget(Line::from("─".repeat(usize::from(rule.width))).dim(), rule);
 
     if let Some(error) = &search.error {
@@ -62,7 +49,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
         return;
     }
     if search.results.is_empty() {
-        let hint = if search.query.trim().is_empty() {
+        let hint = if search.query.as_str().trim().is_empty() {
             ""
         } else if search.loading {
             "Searching…"

@@ -15,4 +15,5 @@ pub mod player;
 pub mod queue;
 pub mod run;
 pub mod settings;
+pub mod text_input;
 pub mod ui;

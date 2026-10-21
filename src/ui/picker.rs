@@ -36,19 +36,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) {
         Constraint::Min(0),
     ])
     .areas(inner);
-    let search = if picker.query.is_empty() {
-        Line::from(vec![
-            Span::styled("› ", Style::new().fg(ACCENT)),
-            Span::styled("type to search", Style::new().dim()),
-        ])
-    } else {
-        Line::from(vec![
-            Span::styled("› ", Style::new().fg(ACCENT)),
-            Span::raw(picker.query.as_str()),
-            Span::styled("▏", Style::new().fg(ACCENT)),
-        ])
-    };
-    frame.render_widget(search, input);
+    super::draw_input(frame, input, &picker.query, "type to search");
     frame.render_widget(Line::from("─".repeat(usize::from(rule.width))).dim(), rule);
 
     let searching = picker.is_searching();

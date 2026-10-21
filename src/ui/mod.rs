@@ -20,6 +20,7 @@ use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
 use crate::format;
 use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
+use crate::text_input::TextInput;
 
 const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
@@ -103,6 +104,26 @@ fn draw_too_small(frame: &mut Frame, area: Rect) {
         .flex(Flex::Center)
         .areas(area);
     frame.render_widget(paragraph, middle);
+}
+
+/// A popup's one-line text field: a prompt, the text (scrolled to keep the cursor in view) or a
+/// dim placeholder, and the terminal's cursor where typing goes.
+fn draw_input(frame: &mut Frame, area: Rect, input: &TextInput, placeholder: &str) {
+    const PROMPT: &str = "› ";
+    let prompt = Span::styled(PROMPT, Style::new().fg(ACCENT));
+    let room = usize::from(area.width).saturating_sub(PROMPT.chars().count());
+    let (line, column) = if input.is_empty() {
+        let hint = Span::styled(placeholder.to_owned(), Style::new().dim());
+        (Line::from(vec![prompt, hint]), 0)
+    } else {
+        let (text, column) = input.window(room);
+        (Line::from(vec![prompt, Span::raw(text.to_owned())]), column)
+    };
+    frame.render_widget(line, area);
+    let column = u16::try_from(column + PROMPT.chars().count()).unwrap_or(u16::MAX);
+    if column < area.width {
+        frame.set_cursor_position((area.x + column, area.y));
+    }
 }
 
 /// A bordered pane, highlighted when focused.
@@ -405,7 +426,7 @@ mod tests {
         app.update(Action::OpenPicker(crate::picker::PickerKind::Genre));
         insta::assert_snapshot!("genre_picker", render(&mut app, 100, 24).backend());
         for c in "tech".chars() {
-            app.update(Action::TypeChar(c));
+            app.update(Action::Edit(crate::text_input::Edit::Insert(c)));
         }
         insta::assert_snapshot!("genre_picker_search", render(&mut app, 100, 24).backend());
     }
@@ -493,7 +514,7 @@ mod tests {
         app.update(Action::OpenSearch);
         insta::assert_snapshot!("search_empty", render(&mut app, 110, 24).backend());
         for c in "aphex twin".chars() {
-            app.update(Action::TypeChar(c));
+            app.update(Action::Edit(crate::text_input::Edit::Insert(c)));
         }
         let generation = match app.update(Action::SearchDue(10))[..] {
             [Effect::FetchSearch { generation, .. }] => generation,
@@ -562,6 +583,41 @@ mod tests {
         app.query.tags = vec!["electronic".into(), "techno".into(), "ambient".into()];
         let cut = first_row(&render(&mut app, 50, 16));
         assert!(cut.trim_end().ends_with('…'), "{cut}");
+    }
+
+    #[test]
+    fn search_input_keeps_the_cursor_in_view() {
+        use crate::text_input::Edit;
+        let mut app = app_with_page();
+        app.update(Action::OpenSearch);
+        let long = "a very long search query that will not fit in the box at all";
+        for c in long.chars() {
+            app.update(Action::Edit(Edit::Insert(c)));
+        }
+        let mut terminal = render(&mut app, 60, 20);
+        let cursor = terminal.get_cursor_position().unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..60).map(|x| buffer[(x, cursor.y)].symbol()).collect();
+        assert!(row.contains("in the box at all"), "{row}");
+        assert!(
+            !row.contains("a very long"),
+            "the start scrolled off: {row}"
+        );
+        let typed_up_to_cursor: String = (0..cursor.x)
+            .map(|x| buffer[(x, cursor.y)].symbol())
+            .collect();
+        assert!(
+            typed_up_to_cursor.ends_with("at all"),
+            "{typed_up_to_cursor}"
+        );
+
+        app.update(Action::Edit(Edit::Home));
+        let mut terminal = render(&mut app, 60, 20);
+        let cursor = terminal.get_cursor_position().unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..60).map(|x| buffer[(x, cursor.y)].symbol()).collect();
+        assert!(row.contains("› a very long"), "{row}");
+        assert_eq!(buffer[(cursor.x, cursor.y)].symbol(), "a");
     }
 
     #[test]
