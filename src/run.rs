@@ -15,6 +15,7 @@ use crate::bandcamp::{BandcampClient, DiscoverQuery};
 use crate::format::error_chain;
 use crate::input;
 use crate::player::{PlayerEvent, PlayerHandle};
+use crate::settings::Settings;
 
 /// How often the progress bar updates while playing. Nothing ticks when paused or idle.
 const PROGRESS_TICK: Duration = Duration::from_millis(250);
@@ -24,6 +25,8 @@ const ALBUM_DEBOUNCE: Duration = Duration::from_millis(250);
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(250);
 /// Info messages disappear after this long, bringing the key hints back.
 const MESSAGE_TIMEOUT: Duration = Duration::from_secs(4);
+/// Settings changes within this long of the first are written together (e.g. holding `+`).
+const SAVE_DELAY: Duration = Duration::from_millis(500);
 
 /// Pending debounced actions; each kind keeps only its latest request.
 #[derive(Default)]
@@ -32,6 +35,8 @@ struct Timers {
     search: Option<(Instant, u64)>,
     /// When the info message with this serial expires.
     message: Option<(Instant, u64)>,
+    /// Settings waiting to be written, and when.
+    save: Option<(Instant, Settings)>,
 }
 
 impl Timers {
@@ -132,10 +137,37 @@ pub async fn run(
         settings_path,
         art: art.map(std::sync::Arc::new),
     };
-    // At most one pending debounced album load: (when, which).
     let mut timers = Timers::default();
     executor.run(effects, &mut timers);
 
+    let result = event_loop(
+        terminal,
+        &mut app,
+        &executor,
+        &mut timers,
+        &mut results,
+        &mut player_events,
+    )
+    .await;
+    // However the loop ended, don't lose the last settings change.
+    if let Some((_, settings)) = timers.save.take() {
+        executor.save(&settings);
+    }
+    if let Some(player) = &player {
+        player.stop();
+    }
+    result
+}
+
+async fn event_loop(
+    terminal: &mut DefaultTerminal,
+    app: &mut App,
+    executor: &Executor,
+    timers: &mut Timers,
+    results: &mut UnboundedReceiver<Action>,
+    player_events: &mut UnboundedReceiver<PlayerEvent>,
+) -> std::io::Result<()> {
+    let player = executor.player.as_ref();
     let mut input = EventStream::new();
     let mut ticker = tokio::time::interval(PROGRESS_TICK);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -143,16 +175,16 @@ pub async fn run(
 
     loop {
         if dirty {
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app))?;
+            terminal.draw(|frame| crate::ui::draw(frame, app))?;
             dirty = false;
             // The layout is known now: a resize may need the cover at another size.
             let effects = app.after_draw();
-            executor.run(effects, &mut timers);
+            executor.run(effects, timers);
         }
-        timers.track_message(&app);
+        timers.track_message(app);
         let action = tokio::select! {
             event = input.next() => match event {
-                Some(Ok(Event::Key(key))) => input::action_for(key, input_mode(&app)),
+                Some(Ok(Event::Key(key))) => input::action_for(key, input_mode(app)),
                 Some(Ok(Event::Resize(..))) => Some(Action::Resize),
                 Some(Ok(_)) => None,
                 Some(Err(e)) => return Err(e),
@@ -161,7 +193,7 @@ pub async fn run(
             Some(action) = results.recv() => Some(action),
             Some(event) = player_events.recv() => Some(Action::Player {
                 event: Some(event),
-                status: player.as_ref().map(PlayerHandle::status).unwrap_or_default(),
+                status: player.map(PlayerHandle::status).unwrap_or_default(),
             }),
             () = sleep_until(timers.album.map(|t| t.0)), if timers.album.is_some() => {
                 timers.album.take().map(|(_, id)| Action::AlbumDue(id))
@@ -172,7 +204,13 @@ pub async fn run(
             () = sleep_until(timers.message.map(|t| t.0)), if timers.message.is_some() => {
                 timers.message.take().map(|(_, serial)| Action::ExpireMessage(serial))
             },
-            _ = ticker.tick(), if app.is_playing() => player.as_ref().and_then(|p| {
+            () = sleep_until(timers.save.as_ref().map(|t| t.0)), if timers.save.is_some() => {
+                if let Some((_, settings)) = timers.save.take() {
+                    executor.save(&settings);
+                }
+                None
+            },
+            _ = ticker.tick(), if app.is_playing() => player.and_then(|p| {
                 // Skip the redraw unless something visible changed (the clock shows whole
                 // seconds), which cuts redraws from 4/s to 1/s while playing.
                 let status = p.status();
@@ -184,15 +222,12 @@ pub async fn run(
         };
         if let Some(action) = action {
             let effects = app.update(action);
-            executor.run(effects, &mut timers);
+            executor.run(effects, timers);
             dirty = true;
         }
         if app.should_quit {
             break;
         }
-    }
-    if let Some(player) = &player {
-        player.stop();
     }
     Ok(())
 }
@@ -335,13 +370,13 @@ impl Executor {
                 }
                 Effect::OpenUrl(url) => open_url(&url),
                 Effect::SaveSettings(settings) => {
-                    // Synchronous on purpose: the file is ~200 bytes, and writing in order
-                    // guarantees the last change wins.
-                    if let Some(path) = &self.settings_path
-                        && let Err(e) = settings.save(path)
-                    {
-                        tracing::warn!(path = %path.display(), error = %e, "couldn't save state");
-                    }
+                    // Keep the first change's deadline, so a burst is written within
+                    // `SAVE_DELAY` of its start, with the latest values.
+                    let due = timers
+                        .save
+                        .as_ref()
+                        .map_or_else(|| Instant::now() + SAVE_DELAY, |t| t.0);
+                    timers.save = Some((due, settings));
                 }
             }
         }
@@ -392,6 +427,18 @@ fn open_url(url: &url::Url) {
     }
 }
 
+impl Executor {
+    /// Synchronous on purpose: the file is ~200 bytes, and writing in order guarantees the
+    /// last change wins.
+    fn save(&self, settings: &Settings) {
+        if let Some(path) = &self.settings_path
+            && let Err(e) = settings.save(path)
+        {
+            tracing::warn!(path = %path.display(), error = %e, "couldn't save state");
+        }
+    }
+}
+
 fn apply(player: &PlayerHandle, command: PlayerCommand) {
     match command {
         PlayerCommand::PlayQueue(queue, start) => player.play_queue(queue, start),
@@ -401,5 +448,41 @@ fn apply(player: &PlayerHandle, command: PlayerCommand) {
         PlayerCommand::Previous => player.previous(),
         PlayerCommand::SeekBy(ms) => player.seek_by(ms),
         PlayerCommand::SetVolume(v) => player.set_volume(v),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn executor() -> Executor {
+        let (results, _) = unbounded_channel();
+        Executor {
+            client: BandcampClient::new().unwrap(),
+            player: None,
+            results,
+            settings_path: None,
+            art: None,
+        }
+    }
+
+    #[test]
+    fn settings_changes_are_batched_from_the_first_one() {
+        let executor = executor();
+        let mut timers = Timers::default();
+        let first = Settings {
+            volume: 0.5,
+            ..Settings::default()
+        };
+        executor.run(vec![Effect::SaveSettings(first)], &mut timers);
+        let (due, _) = timers.save.clone().unwrap();
+        let last = Settings {
+            volume: 0.6,
+            ..Settings::default()
+        };
+        executor.run(vec![Effect::SaveSettings(last.clone())], &mut timers);
+        let (later_due, pending) = timers.save.unwrap();
+        assert_eq!(later_due, due, "a burst doesn't push the write back");
+        assert_eq!(pending, last, "the latest values are written");
     }
 }
