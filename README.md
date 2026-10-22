@@ -12,7 +12,7 @@ A terminal player for [Bandcamp Discover](https://bandcamp.com/discover/) that s
 - Album info, credits, artist bio and tracklist; play from any track
 - Queue releases or single tracks across albums
 - Autoplay: when the queue ends, the next Discover release starts
-- Vim and arrow keys; filters, volume and queue persist between runs
+- Vim and arrow keys, mouse wheel; filters, volume and queue persist between runs
 - Cover art on terminals with kitty, iTerm2 or sixel graphics
 - Expired stream links (valid ~24 h) are refreshed automatically
 
@@ -42,7 +42,7 @@ bandcamp-tui                                 # last-used filters
 bandcamp-tui -t electronic -t techno -s new  # tags; sort: top, new, random
 bandcamp-tui --fresh                         # ignore remembered state
 bandcamp-tui --no-art                        # no cover art
-NO_COLOR=1 bandcamp-tui                      # monochrome: bold, dim and reverse only
+NO_COLOR=1 bandcamp-tui                      # no colours
 ```
 
 | key | action |
@@ -68,9 +68,9 @@ NO_COLOR=1 bandcamp-tui                      # monochrome: bold, dim and reverse
 | `?` | help |
 | `q`, `^c` | quit |
 
-The mouse wheel scrolls the pane, popup or text under the pointer. Hold `Shift` (`Option` in iTerm2) to select text with the mouse.
+The mouse wheel scrolls what's under the pointer; hold `Shift` (`Option` in iTerm2) to select text. The terminal needs at least 50×12; both panes show from 80 columns.
 
-Filters, volume, queue and view are saved to `state.toml`, alongside the log file `bandcamp-tui.log` (override with `--log-file`; the previous session's log is kept as `bandcamp-tui.log.1`):
+Filters, volume, queue and view are saved to `state.toml`, alongside the log file `bandcamp-tui.log` (override with `--log-file`; the previous run's is kept as `.log.1`):
 
 - macOS: `~/Library/Application Support/bandcamp-tui/`
 - Linux: `~/.local/share/bandcamp-tui/`
