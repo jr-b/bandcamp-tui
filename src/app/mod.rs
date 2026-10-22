@@ -131,7 +131,7 @@ pub enum Action {
     ClosePopup,
     /// An edit to the picker's or search box's text.
     Edit(Edit),
-    /// Terminal resized; just redraw.
+    /// Terminal resized (or zoomed, which changes `art_font`); just redraw.
     Resize,
     /// The info message with this serial has been shown long enough.
     ExpireMessage(u64),

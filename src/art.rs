@@ -32,11 +32,40 @@ pub const LISTENING_TEXT_ROWS: u16 = 8;
 /// Columns kept free on each side of the cover in the listening view.
 const LISTENING_SIDE_COLS: u16 = 2;
 
-/// Where a cover fits, in terminal cells.
+/// Where a cover fits, in terminal cells, and the cell size in pixels it was laid out for.
+/// The cell size is part of the box because zooming the terminal changes it: an encoding made
+/// for other cells has the wrong pixel size, even when it spans the same cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ArtBox {
     pub cols: u16,
     pub rows: u16,
+    /// Cell width and height in pixels.
+    pub cell: (u16, u16),
+}
+
+impl ArtBox {
+    #[must_use]
+    pub const fn new(cols: u16, rows: u16, font: FontSize) -> Self {
+        Self {
+            cols,
+            rows,
+            cell: (font.width, font.height),
+        }
+    }
+
+    #[must_use]
+    pub const fn font(self) -> FontSize {
+        FontSize::new(self.cell.0, self.cell.1)
+    }
+}
+
+/// The cell size in pixels, from the terminal's window size. `None` when the terminal doesn't
+/// report pixels (some report 0).
+#[must_use]
+pub fn font_from_window(size: &ratatui::crossterm::terminal::WindowSize) -> Option<FontSize> {
+    let width = size.width.checked_div(size.columns).filter(|&w| w > 0)?;
+    let height = size.height.checked_div(size.rows).filter(|&h| h > 0)?;
+    Some(FontSize::new(width, height))
 }
 
 /// How big the cover can be in a pane of `width`×`height` cells: as large as possible while
@@ -58,7 +87,7 @@ pub fn layout(width: u16, height: u16, font: FontSize, compact: bool) -> Option<
         .find(|&rows| rows <= max_rows && cols_for(rows) <= max_cols)
         .and_then(|rows| {
             let cols = u16::try_from(cols_for(rows)).ok()?;
-            Some(ArtBox { cols, rows })
+            Some(ArtBox::new(cols, rows, font))
         })
 }
 
@@ -77,15 +106,16 @@ pub fn listening_layout(width: u16, height: u16, font: FontSize) -> Option<ArtBo
         .find(|&rows| rows <= max_rows && cols_for(rows) <= max_cols)
         .and_then(|rows| {
             let cols = u16::try_from(cols_for(rows)).ok()?;
-            Some(ArtBox { cols, rows })
+            Some(ArtBox::new(cols, rows, font))
         })
 }
 
-/// The smallest Bandcamp image that covers `art_box` at this font size without upscaling.
+/// The smallest Bandcamp image that covers `art_box` at its cell size without upscaling.
 #[must_use]
-pub fn source_size(art_box: ArtBox, font: FontSize) -> ImageSize {
-    let pixels = (u32::from(art_box.cols) * u32::from(font.width))
-        .max(u32::from(art_box.rows) * u32::from(font.height));
+pub fn source_size(art_box: ArtBox) -> ImageSize {
+    let (cell_w, cell_h) = art_box.cell;
+    let pixels = (u32::from(art_box.cols) * u32::from(cell_w))
+        .max(u32::from(art_box.rows) * u32::from(cell_h));
     match pixels {
         0..=150 => ImageSize::Px150,
         151..=350 => ImageSize::Px350,
@@ -236,12 +266,24 @@ fn protocol_from_env() -> Option<ProtocolType> {
     }
 }
 
-/// Decodes a JPEG cover and encodes it for the terminal to fill `art_box`.
+/// `picker` with `font` as its cell size. ratatui-image has no setter, and the size detected
+/// at startup goes stale when the terminal is zoomed.
+fn picker_for(picker: &Picker, font: FontSize) -> Picker {
+    #[expect(
+        deprecated,
+        reason = "the only way to give a picker another cell size; we keep the detected protocol"
+    )]
+    let mut resized = Picker::from_fontsize(font);
+    resized.set_protocol_type(picker.protocol_type());
+    resized
+}
+
+/// Decodes a JPEG cover and encodes it for the terminal to fill `art_box`, at its cell size.
 /// CPU-bound: call from a blocking task.
 pub fn encode(picker: &Picker, jpeg: &[u8], art_box: ArtBox) -> Result<Art, String> {
     let image = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg)
         .map_err(|e| format!("couldn't decode cover: {e}"))?;
-    let protocol = picker
+    let protocol = picker_for(picker, art_box.font())
         .new_protocol(
             image,
             Size::new(art_box.cols, art_box.rows),
@@ -297,7 +339,7 @@ pub(crate) mod tests {
         out.into_inner()
     }
 
-    pub(crate) const TEST_BOX: ArtBox = ArtBox { cols: 16, rows: 8 };
+    pub(crate) const TEST_BOX: ArtBox = ArtBox::new(16, 8, FONT);
 
     #[test]
     fn encodes_a_jpeg_and_rejects_garbage() {
@@ -317,23 +359,17 @@ pub(crate) mod tests {
         // Roomy pane: limited by the 20-row cap.
         assert_eq!(
             layout(120, 60, FONT, false),
-            Some(ArtBox { cols: 40, rows: 20 })
+            Some(ArtBox::new(40, 20, FONT))
         );
         // Height-limited: 45 % of 30 rows is 13, so the 12-row step.
         assert_eq!(
             layout(120, 30, FONT, false),
-            Some(ArtBox { cols: 24, rows: 12 })
+            Some(ArtBox::new(24, 12, FONT))
         );
         // Width-limited: 60 - 29 = 31 columns for the cover, so 12 rows (24 cols) fits, 16 doesn't.
-        assert_eq!(
-            layout(60, 60, FONT, false),
-            Some(ArtBox { cols: 24, rows: 12 })
-        );
+        assert_eq!(layout(60, 60, FONT, false), Some(ArtBox::new(24, 12, FONT)));
         // Just above the smallest step.
-        assert_eq!(
-            layout(41, 14, FONT, false),
-            Some(ArtBox { cols: 12, rows: 6 })
-        );
+        assert_eq!(layout(41, 14, FONT, false), Some(ArtBox::new(12, 6, FONT)));
     }
 
     #[test]
@@ -345,14 +381,8 @@ pub(crate) mod tests {
 
     #[test]
     fn compact_caps_the_size() {
-        assert_eq!(
-            layout(120, 60, FONT, true),
-            Some(ArtBox { cols: 16, rows: 8 })
-        );
-        assert_eq!(
-            layout(120, 14, FONT, true),
-            Some(ArtBox { cols: 12, rows: 6 })
-        );
+        assert_eq!(layout(120, 60, FONT, true), Some(ArtBox::new(16, 8, FONT)));
+        assert_eq!(layout(120, 14, FONT, true), Some(ArtBox::new(12, 6, FONT)));
     }
 
     #[test]
@@ -361,34 +391,59 @@ pub(crate) mod tests {
         let square = FontSize::new(16, 16);
         assert_eq!(
             layout(120, 30, square, false),
-            Some(ArtBox { cols: 12, rows: 12 })
+            Some(ArtBox::new(12, 12, square))
         );
         // Odd sizes round the width up, never squashing the cover.
         let odd = FontSize::new(9, 19);
+        assert_eq!(layout(120, 30, odd, false), Some(ArtBox::new(26, 12, odd)));
+    }
+
+    #[test]
+    fn reads_the_cell_size_from_the_window() {
+        use ratatui::crossterm::terminal::WindowSize;
+        let window = |columns, rows, width, height| WindowSize {
+            rows,
+            columns,
+            width,
+            height,
+        };
+        let font = font_from_window(&window(100, 50, 1500, 1500)).unwrap();
+        assert_eq!((font.width, font.height), (15, 30));
+        assert!(
+            font_from_window(&window(100, 50, 0, 0)).is_none(),
+            "no pixels reported"
+        );
+        assert!(font_from_window(&window(0, 0, 1500, 1500)).is_none());
+    }
+
+    #[test]
+    fn zooming_in_keeps_the_box_in_its_cells_and_pixels() {
+        // The same window zoomed 1.5×: fewer, bigger cells.
+        let zoomed = FontSize::new(15, 30);
+        let art_box = layout(80, 40, zoomed, false).unwrap();
+        assert_eq!(art_box, ArtBox::new(32, 16, zoomed));
         assert_eq!(
-            layout(120, 30, odd, false),
-            Some(ArtBox { cols: 26, rows: 12 })
+            source_size(art_box),
+            ImageSize::Px700,
+            "480 px tall at the new size"
         );
     }
 
     #[test]
+    fn encodes_at_the_box_cell_size() {
+        // The picker's own cell size (10×20) is stale; the box's decides the pixel size.
+        let picker = Picker::halfblocks();
+        let zoomed = ArtBox::new(16, 8, FontSize::new(15, 30));
+        let art = encode(&picker, &test_jpeg(), zoomed).unwrap();
+        assert_eq!(art.protocol().size(), Size::new(16, 8));
+    }
+
+    #[test]
     fn picks_the_smallest_source_that_covers_the_box() {
-        assert_eq!(
-            source_size(ArtBox { cols: 12, rows: 6 }, FONT),
-            ImageSize::Px150
-        );
-        assert_eq!(
-            source_size(ArtBox { cols: 24, rows: 12 }, FONT),
-            ImageSize::Px350
-        );
-        assert_eq!(
-            source_size(ArtBox { cols: 40, rows: 20 }, FONT),
-            ImageSize::Px700
-        );
-        assert_eq!(
-            source_size(ArtBox { cols: 80, rows: 40 }, FONT),
-            ImageSize::Px1200
-        );
+        assert_eq!(source_size(ArtBox::new(12, 6, FONT)), ImageSize::Px150);
+        assert_eq!(source_size(ArtBox::new(24, 12, FONT)), ImageSize::Px350);
+        assert_eq!(source_size(ArtBox::new(40, 20, FONT)), ImageSize::Px700);
+        assert_eq!(source_size(ArtBox::new(80, 40, FONT)), ImageSize::Px1200);
     }
 
     #[test]
@@ -396,18 +451,18 @@ pub(crate) mod tests {
         // 50 rows: 42 left above the text, so the 40-row step; 80 columns fit in 160 - 4.
         assert_eq!(
             listening_layout(160, 50, FONT),
-            Some(ArtBox { cols: 80, rows: 40 })
+            Some(ArtBox::new(80, 40, FONT))
         );
         // Width-limited: 60 - 4 columns, so 28 rows (56 columns).
         assert_eq!(
             listening_layout(60, 60, FONT),
-            Some(ArtBox { cols: 56, rows: 28 })
+            Some(ArtBox::new(56, 28, FONT))
         );
         // Too short for the text and the smallest cover.
         assert_eq!(listening_layout(160, 13, FONT), None);
         assert_eq!(
             listening_layout(160, 14, FONT),
-            Some(ArtBox { cols: 12, rows: 6 })
+            Some(ArtBox::new(12, 6, FONT))
         );
     }
 }

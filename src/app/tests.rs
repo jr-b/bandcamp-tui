@@ -399,8 +399,10 @@ fn open_in_browser_uses_the_selected_release() {
     );
 }
 
-const SMALL_BOX: ArtBox = ArtBox { cols: 12, rows: 6 };
-const BIG_BOX: ArtBox = ArtBox { cols: 24, rows: 12 };
+const SMALL_BOX: ArtBox = ArtBox::new(12, 6, FONT);
+const BIG_BOX: ArtBox = ArtBox::new(24, 12, FONT);
+/// The cell size `App` starts with.
+const FONT: ratatui_image::FontSize = ratatui_image::FontSize::new(10, 20);
 
 /// An app with art on and the cover box as the UI would record it.
 fn with_art(art_box: ArtBox) -> App {
@@ -525,6 +527,23 @@ fn a_resize_re_encodes_and_shows_the_old_size_meanwhile() {
     app.album_pane.art_box = Some(BIG_BOX);
     assert_eq!(app.after_draw(), []);
     assert!(matches!(app.art_for(Some(art_id)), Some(Some(a)) if a.art_box == BIG_BOX));
+}
+
+#[test]
+fn zooming_re_encodes_for_the_new_cell_size() {
+    let mut app = with_art(BIG_BOX);
+    let art_id = load_cover(&mut app, BIG_BOX);
+
+    // Zoomed out: the cover spans the same cells, but they're smaller now. The old encoding is
+    // too big in pixels, so it's neither reused nor shown while the new one encodes.
+    let zoomed = ArtBox::new(24, 12, ratatui_image::FontSize::new(8, 16));
+    app.album_pane.art_box = Some(zoomed);
+    let effects = app.after_draw();
+    assert!(
+        matches!(&effects[..], [Effect::EncodeArt { art_box, .. }] if *art_box == zoomed),
+        "{effects:?}"
+    );
+    assert_eq!(app.art_for(Some(art_id)), Some(None));
 }
 
 #[test]
@@ -1301,7 +1320,7 @@ fn listening_view_fetches_the_playing_cover_not_the_selected_one() {
 
     // No debounce: the first draw fetches it, at the listening view's size.
     let effects = app.after_draw();
-    let wanted = crate::art::source_size(BIG_BOX, app.art_font);
+    let wanted = crate::art::source_size(BIG_BOX);
     assert!(
         matches!(&effects[..], [Effect::FetchArt { id, size }] if *id == playing_art && *size == wanted),
         "{effects:?}"
