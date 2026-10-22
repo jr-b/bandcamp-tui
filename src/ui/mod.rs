@@ -927,6 +927,17 @@ mod tests {
     }
 
     #[test]
+    fn album_header_wraps_instead_of_cutting_facts() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        // A pane too narrow for the facts on one line.
+        let text = text_of(&render(&mut app, 100, 24)).join("\n");
+        for fact in ["released 16 Oct 2026", "Portland, Oregon"] {
+            assert!(text.contains(fact), "{fact} cut: {text}");
+        }
+    }
+
+    #[test]
     fn single_pane_at_80x24_describes_the_selection() {
         let mut app = app_with_page();
         let lines = text_of(&render(&mut app, 80, 24));

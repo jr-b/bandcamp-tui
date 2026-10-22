@@ -45,15 +45,16 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
         AlbumView::Loading(item) => {
             let art = art_slot(app, item.art_id);
             let text_width = text_width_beside(art, inner.width);
-            let mut text = summary_from_item(item, text_width);
+            let mut text = summary_from_item(item);
             text.push_line(Line::default());
             text.push_line(Line::from("Loading tracks…").dim());
-            let lines = u16::try_from(text.lines.len()).unwrap_or(u16::MAX);
+            let text = Paragraph::new(text).wrap(Wrap { trim: false });
+            let lines = wrapped_height(&text, text_width, art);
             let (text_area, _) = header_with_art(frame, inner, art, lines);
-            frame.render_widget(Paragraph::new(text), text_area);
+            frame.render_widget(text, text_area);
         }
         AlbumView::Failed(item, error) => {
-            let mut text = summary_from_item(item, inner.width);
+            let mut text = summary_from_item(item);
             text.push_line(Line::default());
             text.push_line(
                 Line::from(format!("Couldn't load this release: {error}"))
@@ -73,15 +74,16 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
     }
 }
 
-/// Title, artist, label and facts, each kept to one row of `width`. With `rows` of room
-/// (beside a tall cover) it lists one fact per line and adds more detail.
+/// Title, artist, label and facts, one line each; callers wrap what is too long for `width`
+/// (the tags are cut instead).
+/// With `rows` of room (beside a tall cover) it lists one fact per line, cut to fit, and adds
+/// more detail.
 fn summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
     if rows >= TALL_HEADER_ROWS {
         return tall_summary(album, width, rows);
     }
-    let width = usize::from(width);
     let dim = Style::new().dim();
-    let mut lines = vec![Line::from(format::truncate(&album.title, width).into_owned()).bold()];
+    let mut lines = vec![Line::from(album.title.clone()).bold()];
 
     let mut by = vec![Span::styled("by ", dim), Span::raw(album.artist.clone())];
     if album.band.name != album.artist {
@@ -92,9 +94,9 @@ fn summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
         by.push(Span::styled(" · label ", dim));
         by.push(Span::raw(label.clone()));
     }
-    lines.push(fit(Line::from(by), width));
+    lines.push(Line::from(by));
 
-    // Most useful first: whatever doesn't fit gets cut from the end.
+    // Most useful first, so wrapping puts the least useful last.
     let n = album.tracks.len();
     let mut facts = vec![format!("{n} track{}", if n == 1 { "" } else { "s" })];
     if !album.duration().is_zero() {
@@ -107,7 +109,7 @@ fn summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
     if let Some(location) = &album.band.location {
         facts.push(location.clone());
     }
-    lines.push(fit(Line::from(facts.join(" · ")).dim(), width));
+    lines.push(Line::from(facts.join(" · ")).dim());
 
     if !album.tags.is_empty() {
         let tags = album
@@ -116,8 +118,10 @@ fn summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
             .map(|t| format!("#{}", t.norm_name))
             .collect::<Vec<_>>()
             .join(" ");
+        // Decoration, not worth a tracklist row: cut rather than wrap.
         lines.push(
-            Line::from(format::truncate(&tags, width).into_owned()).patch_style(theme().accent),
+            Line::from(format::truncate(&tags, usize::from(width)).into_owned())
+                .patch_style(theme().accent),
         );
     }
     if album.is_preorder {
@@ -210,8 +214,7 @@ fn tall_summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
 }
 
 /// What we know from the discover feed while the details load.
-fn summary_from_item(item: &DiscoverItem, width: u16) -> Text<'static> {
-    let width = usize::from(width);
+fn summary_from_item(item: &DiscoverItem) -> Text<'static> {
     let dim = Style::new().dim();
     let mut by = vec![Span::styled("by ", dim), Span::raw(item.artist.clone())];
     if item.band_name != item.artist {
@@ -226,9 +229,9 @@ fn summary_from_item(item: &DiscoverItem, width: u16) -> Text<'static> {
         facts.push(location.clone());
     }
     Text::from(vec![
-        Line::from(format::truncate(&item.title, width).into_owned()).bold(),
-        fit(Line::from(by), width),
-        fit(Line::from(facts.join(" · ")).dim(), width),
+        Line::from(item.title.clone()).bold(),
+        Line::from(by),
+        Line::from(facts.join(" · ")).dim(),
     ])
 }
 
@@ -244,6 +247,18 @@ fn art_slot(app: &App, id: Option<crate::bandcamp::ArtId>) -> ArtSlot<'_> {
 /// Columns left for the text beside the cover.
 fn text_width_beside(art: ArtSlot<'_>, width: u16) -> u16 {
     art.map_or(width, |(b, _)| width.saturating_sub(b.cols + 1))
+}
+
+/// Without a cover the header may take this many rows before the tracklist is squeezed.
+const MAX_TEXT_HEADER_ROWS: u16 = 7;
+
+/// Rows `text` takes wrapped to `width`, at most the cover's height (or, without one,
+/// [`MAX_TEXT_HEADER_ROWS`]): the tracklist below matters more than the last tag.
+fn wrapped_height(text: &Paragraph<'_>, width: u16, art: ArtSlot<'_>) -> u16 {
+    let max = art.map_or(MAX_TEXT_HEADER_ROWS, |(b, _)| b.rows);
+    u16::try_from(text.line_count(width))
+        .unwrap_or(u16::MAX)
+        .min(max)
 }
 
 /// Lays out the header: cover on the left (or a placeholder while it loads), text on the
@@ -290,10 +305,10 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
     let art = art_slot(app, album.art_id);
     let text_width = text_width_beside(art, area.width);
     let header_rows = art.map_or(0, |(b, _)| b.rows);
-    let header = summary(album, text_width, header_rows);
-    let lines = u16::try_from(header.lines.len()).unwrap_or(0);
+    let header = Paragraph::new(summary(album, text_width, header_rows)).wrap(Wrap { trim: false });
+    let lines = wrapped_height(&header, text_width, art);
     let (text_area, rest) = header_with_art(frame, area, art, lines);
-    frame.render_widget(Paragraph::new(header), text_area);
+    frame.render_widget(header, text_area);
     let [rule, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(rest);
     frame.render_widget(Line::from("─".repeat(usize::from(rule.width))).dim(), rule);
     app.album_pane.page_rows = usize::from(list.height);
