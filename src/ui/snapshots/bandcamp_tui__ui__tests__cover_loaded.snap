@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: terminal.backend()
 ---
-" bandcamp  Discover · electronic · best-selling                                                      1,947,113 releases "
-"┌ Discover ──────────────────────────────────────────── loading… ┐┌ Album ──────────────────────────────────── i about ┐"
+" bandcamp  Discover · electronic · best-selling                                                                         "
+"┌ Discover · 1/1,947,113 ────────────────────────────── loading… ┐┌ Album ──────────────────────────────────── i about ┐"
 "│  Title                           Artist                Trk  Len││▄▄▄▄▄▄▄▄▄▄▄▄ Ocean Company                          │"
 "│  Ocean Company                   Ocean Company          10  38m││▄▄▄▄▄▄▄▄▄▄▄▄ by Ocean Company · on Hotel Pools · la…│"
 "│  Pete Cannon - From The Manor H… N4 Records             12  63m││▄▄▄▄▄▄▄▄▄▄▄▄ 10 tracks · 38 min · released 16 Oct 2…│"
@@ -24,5 +24,5 @@ expression: terminal.backend()
 "└────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘"
 " Now playing ────────────────────────────────────────────────────────────────────────────────────────────── autoplay on "
 " Nothing playing. Select a release and press ⏎.                                                                         "
-"                                                                                                                        "
+"                                                                                                               vol 100% "
 " ⏎ play  space pause  tab pane  q quit  / search  ? help  n/p track  ←→ seek  +/- volume  f genre  t time  L place      "

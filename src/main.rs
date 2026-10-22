@@ -11,6 +11,8 @@ use bandcamp_tui::run::{Services, run};
 use bandcamp_tui::settings::Settings;
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::{Result, WrapErr};
+use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use ratatui::crossterm::execute;
 use tracing_subscriber::EnvFilter;
 
 /// Browse Bandcamp Discover and stream full albums. No account needed.
@@ -143,6 +145,8 @@ fn main() -> Result<()> {
     let mut terminal = ratatui::init();
     // Must run in the alternate screen and before input is read: it asks the terminal.
     let art = bandcamp_tui::art::detect(config.album_art);
+    // After the capability queries, so no mouse report gets mixed into their answers.
+    enable_mouse();
     let services = Services {
         client,
         player,
@@ -157,8 +161,27 @@ fn main() -> Result<()> {
         queue: settings.queue.clone(),
     };
     let result = runtime.block_on(run(&mut terminal, services, query));
+    disable_mouse();
     ratatui::restore();
     result.wrap_err("terminal I/O failed")
+}
+
+/// Mouse reports for the wheel. `ratatui::restore` doesn't turn them off, so a panic hook does
+/// it before ratatui's own (installed by `ratatui::init`) restores the rest.
+fn enable_mouse() {
+    if let Err(e) = execute!(std::io::stdout(), EnableMouseCapture) {
+        tracing::warn!(error = %e, "couldn't enable the mouse");
+        return;
+    }
+    let restore = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        disable_mouse();
+        restore(info);
+    }));
+}
+
+fn disable_mouse() {
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
 }
 
 /// Logs go to a file: stdout and stderr belong to the TUI.
@@ -170,6 +193,16 @@ fn init_logging(path: Option<PathBuf>, data_dir: Option<&std::path::Path>) -> Re
         std::fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
         dir.join("bandcamp-tui.log")
     };
+    // Keep the previous session's log (e.g. a crash to report) as `<name>.1`.
+    let previous = path.with_file_name(format!(
+        "{}.1",
+        path.file_name()
+            .map_or_else(Default::default, |n| n.to_string_lossy())
+    ));
+    let rotated = match std::fs::rename(&path, &previous) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    };
     let file = File::create(&path).wrap_err_with(|| format!("creating {}", path.display()))?;
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("bandcamp_tui=info,symphonia=error,warn"));
@@ -179,5 +212,8 @@ fn init_logging(path: Option<PathBuf>, data_dir: Option<&std::path::Path>) -> Re
         .with_ansi(false)
         .init();
     tracing::info!(path = %path.display(), "logging started");
+    if let Err(e) = rotated {
+        tracing::warn!(path = %previous.display(), error = %e, "couldn't keep the previous log");
+    }
     Ok(())
 }

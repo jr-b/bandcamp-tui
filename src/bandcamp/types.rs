@@ -110,8 +110,11 @@ impl Date {
         let day = doy - (153 * mp + 2) / 5 + 1;
         let month = if mp < 10 { mp + 3 } else { mp - 9 };
         let year = yoe + era * 400 + i64::from(month <= 2);
-        // The ranges are guaranteed by the algorithm: day 1..=31, month 1..=12.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the algorithm guarantees day 1..=31 and month 1..=12"
+        )]
         Self {
             year: year as i32,
             month: month as u8,

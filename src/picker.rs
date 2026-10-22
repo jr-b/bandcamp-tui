@@ -4,6 +4,7 @@ use ratatui::widgets::ListState;
 
 use crate::bandcamp::{DiscoverQuery, Filters};
 use crate::fuzzy;
+use crate::text_input::{Edit, TextInput};
 
 /// The "fresh" time facet is rejected by the API without a login.
 const FRESH_TIME_FACET: i64 = -1;
@@ -66,7 +67,7 @@ pub struct PickerItem {
 #[derive(Debug)]
 pub struct Picker {
     pub kind: PickerKind,
-    pub query: String,
+    pub query: TextInput,
     items: Vec<PickerItem>,
     /// "Use this as a tag" entry for text that isn't in the list (genre picker only).
     custom: Option<PickerItem>,
@@ -87,7 +88,7 @@ impl Picker {
         };
         let mut picker = Self {
             kind,
-            query: String::new(),
+            query: TextInput::default(),
             items,
             custom: None,
             custom_first: false,
@@ -124,22 +125,14 @@ impl Picker {
 
     #[must_use]
     pub fn is_searching(&self) -> bool {
-        !self.query.trim().is_empty()
+        !self.query.as_str().trim().is_empty()
     }
 
-    pub fn push(&mut self, c: char) {
-        self.query.push(c);
-        self.refilter();
-    }
-
-    pub fn backspace(&mut self) {
-        self.query.pop();
-        self.refilter();
-    }
-
-    pub fn clear(&mut self) {
-        self.query.clear();
-        self.refilter();
+    /// Edits the search text, re-filtering if it changed.
+    pub fn edit(&mut self, edit: Edit) {
+        if self.query.apply(edit) {
+            self.refilter();
+        }
     }
 
     pub fn move_by(&mut self, delta: isize) {
@@ -160,7 +153,7 @@ impl Picker {
     }
 
     fn refilter(&mut self) {
-        let query = self.query.trim();
+        let query = self.query.as_str().trim();
         let mut scored: Vec<(u32, usize)> = self
             .items
             .iter()
@@ -361,7 +354,7 @@ mod tests {
     fn typing_filters_and_ranks() {
         let mut p = picker(PickerKind::Genre);
         for c in "techno".chars() {
-            p.push(c);
+            p.edit(Edit::Insert(c));
         }
         assert_eq!(labels(&p)[0], "techno");
         assert_eq!(
@@ -369,15 +362,15 @@ mod tests {
             Some(&Choice::Tags(vec!["electronic".into(), "techno".into()]))
         );
         assert!(p.custom.is_none(), "an exact match needs no custom tag");
-        p.backspace();
-        assert_eq!(p.query, "techn");
+        p.edit(Edit::Backspace);
+        assert_eq!(p.query.as_str(), "techn");
     }
 
     #[test]
     fn partial_text_prefers_list_matches_over_a_custom_tag() {
         let mut p = picker(PickerKind::Genre);
         for c in "tech".chars() {
-            p.push(c);
+            p.edit(Edit::Insert(c));
         }
         assert_eq!(labels(&p)[0], "techno");
         assert_eq!(labels(&p).last(), Some(&"Tag “tech”"));
@@ -387,7 +380,7 @@ mod tests {
     fn unknown_text_offers_a_custom_tag() {
         let mut p = picker(PickerKind::Genre);
         for c in "Lo-Fi House".chars() {
-            p.push(c);
+            p.edit(Edit::Insert(c));
         }
         assert_eq!(labels(&p)[0], "Tag “lo-fi-house”");
         assert_eq!(
@@ -400,7 +393,7 @@ mod tests {
     fn subgenres_match_on_their_parent_too() {
         let mut p = picker(PickerKind::Genre);
         for c in "metal doom".chars() {
-            p.push(c);
+            p.edit(Edit::Insert(c));
         }
         assert!(labels(&p).contains(&"doom"), "{:?}", labels(&p));
     }
@@ -418,7 +411,7 @@ mod tests {
         let mut p = picker(PickerKind::Location);
         assert_eq!(labels(&p)[0], "Anywhere");
         for c in "berl".chars() {
-            p.push(c);
+            p.edit(Edit::Insert(c));
         }
         assert_eq!(p.selected(), Some(&Choice::Location(2_950_159)));
         assert!(p.custom.is_none(), "no free-text locations");

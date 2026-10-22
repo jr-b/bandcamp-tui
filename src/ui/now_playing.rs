@@ -4,16 +4,18 @@ use std::time::Duration;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
+use unicode_width::UnicodeWidthStr;
 
-use super::ACCENT;
+use super::theme::theme;
 use crate::app::App;
 use crate::format;
 use crate::player::{PlaybackState, Status};
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
+    const TITLE: &str = " Now playing ";
     let mut right = Vec::new();
     if let Some((next, more)) = app.up_next() {
         let more = if more > 0 {
@@ -26,14 +28,20 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         right.push(Span::raw(label));
         right.push(Span::styled(format!("{more} ·"), Style::new().dim()));
     }
-    right.push(if app.autoplay {
-        Span::styled(" autoplay on ", Style::new().fg(ACCENT))
+    let autoplay = if app.autoplay {
+        Span::styled(" autoplay on ", theme().accent)
     } else {
         Span::styled(" autoplay off ", Style::new().dim())
-    });
+    };
+    // Up next goes first when the titles would touch: autoplay is a mode, always shown.
+    let room = usize::from(area.width).saturating_sub(TITLE.width() + 2);
+    if Line::from(right.clone()).width() + autoplay.width() > room {
+        right.clear();
+    }
+    right.push(autoplay);
     let block = Block::new()
         .borders(Borders::TOP)
-        .title(" Now playing ")
+        .title(TITLE)
         .title(Line::from(right).right_aligned())
         .border_style(Style::new().dim());
     let inner = block.inner(area);
@@ -49,25 +57,29 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
             "No audio output."
         };
         frame.render_widget(Line::from(format!(" {hint}")).dim(), info);
+        // The volume `+`/`-` set, where it shows while playing.
+        if app.player_available {
+            let volume = format!("vol {:>3}% ", volume_percent(status.volume));
+            frame.render_widget(Line::from(volume).right_aligned().dim(), progress);
+        }
         return;
     };
     let track = &album.tracks[index];
     let (icon, state) = state_label(status.state);
-    let mut line = vec![
-        Span::styled(format!(" {icon} "), Style::new().fg(ACCENT).bold()),
-        Span::styled(track.title.as_str(), Style::new().bold()),
+    // Most important first, so a narrow bar cuts the album, not the state.
+    let line = Line::from(vec![
+        Span::styled(format!(" {icon} "), theme().accent.bold()),
+        Span::styled(track.title.clone(), Style::new().bold()),
+        Span::styled(state, theme().warning),
         Span::raw(" — "),
-        Span::raw(track.artist.as_str()),
+        Span::raw(track.artist.clone()),
         Span::styled(format!(" · {}", album.title), Style::new().dim()),
         Span::styled(
             format!(" · {}/{}", index + 1, album.tracks.len()),
             Style::new().dim(),
         ),
-    ];
-    if !state.is_empty() {
-        line.push(Span::styled(state, Style::new().fg(Color::Yellow)));
-    }
-    frame.render_widget(Line::from(line), info);
+    ]);
+    frame.render_widget(super::fit(line, usize::from(info.width)), info);
 
     frame.render_widget(
         progress_line(status, track.duration, usize::from(progress.width)),
@@ -105,7 +117,7 @@ pub(super) fn progress_line(
         format::clock(duration),
         volume_percent(status.volume)
     );
-    let bar_width = width.saturating_sub(left.len() + right.len());
+    let bar_width = width.saturating_sub(left.width() + right.width());
     let ratio = if duration.is_zero() {
         0.0
     } else {
@@ -119,7 +131,11 @@ pub(super) fn progress_line(
 }
 
 fn volume_percent(volume: f32) -> u8 {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // clamped to 0..=100
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to 0..=100"
+    )]
     let percent = (volume.clamp(0.0, 1.0) * 100.0).round() as u8;
     percent
 }
@@ -129,14 +145,15 @@ fn progress_bar(width: usize, ratio: f64) -> Span<'static> {
     if width < 2 {
         return Span::raw("");
     }
-    #[allow(
+    #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        clippy::cast_precision_loss
+        clippy::cast_precision_loss,
+        reason = "a terminal width, and a ratio in 0..=1"
     )]
     let filled = ((width - 1) as f64 * ratio).round() as usize;
     let bar = format!("{}●{}", "━".repeat(filled), "─".repeat(width - 1 - filled));
-    Span::styled(bar, Style::new().fg(ACCENT))
+    Span::styled(bar, theme().accent)
 }
 
 #[cfg(test)]

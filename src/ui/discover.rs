@@ -2,55 +2,67 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Cell, Row, Table};
+use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState, Wrap};
+use unicode_width::UnicodeWidthStr;
 
-use super::{ACCENT, pane};
+use super::pane;
+use super::theme::theme;
 use crate::app::{App, Focus, ListSource};
 use crate::format;
 
-const WIDTHS: [Constraint; 5] = [
-    Constraint::Length(1),
-    Constraint::Fill(3),
-    Constraint::Fill(2),
-    Constraint::Length(3),
-    Constraint::Length(4),
-];
+/// Below this inner width the track count column is left out, so titles keep their room.
+const TRACKS_COLUMN_MIN_WIDTH: u16 = 50;
+
+/// Marker, title, artist, (track count,) length.
+fn widths(show_tracks: bool) -> Vec<Constraint> {
+    let mut widths = vec![
+        Constraint::Length(1),
+        Constraint::Fill(3),
+        Constraint::Fill(2),
+        Constraint::Length(3),
+        Constraint::Length(4),
+    ];
+    if !show_tracks {
+        widths.remove(3);
+    }
+    widths
+}
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let focused = app.focus == Focus::Discover;
-    let title = match &app.source {
-        ListSource::Discover => "Discover".to_owned(),
-        ListSource::Search(_) => "Search results".to_owned(),
-        ListSource::Artist(name) => name.clone(),
-    };
-    let mut block = pane(&title, focused);
+    let mut block = pane(&title(app), focused);
     if app.discover.loading {
-        block = block.title(Line::from(" loading… ").right_aligned().fg(ACCENT));
+        block = block.title(
+            Line::from(" loading… ")
+                .right_aligned()
+                .patch_style(theme().accent),
+        );
     }
+    app.pane_areas.list = area;
     let inner = block.inner(area);
     // One row is the column header.
     app.page_rows = usize::from(inner.height.saturating_sub(1));
 
     if app.discover.items.is_empty() {
-        let text = match (&app.source, app.discover.loading) {
-            (ListSource::Discover, true) => "Loading Discover…",
-            (ListSource::Discover, false) => "No releases match these filters.",
-            (_, true) => "Loading releases…",
-            (_, false) => "No releases.",
-        };
         frame.render_widget(block, area);
-        let y = inner.y + inner.height / 2;
-        frame.render_widget(
-            Line::from(text).dim().centered(),
-            Rect::new(inner.x, y, inner.width, 1),
-        );
+        let text = empty_text(app);
+        let paragraph = Paragraph::new(text).centered().wrap(Wrap { trim: true });
+        let height = u16::try_from(paragraph.line_count(inner.width))
+            .unwrap_or(u16::MAX)
+            .min(inner.height);
+        let [middle] = Layout::vertical([Constraint::Length(height)])
+            .flex(Flex::Center)
+            .areas(inner);
+        frame.render_widget(paragraph, middle);
         return;
     }
 
     // Same layout the table computes, so text can be cut with an ellipsis instead of mid-word.
-    let columns = Layout::horizontal(WIDTHS)
+    let show_tracks = inner.width >= TRACKS_COLUMN_MIN_WIDTH;
+    let widths = widths(show_tracks);
+    let columns = Layout::horizontal(widths.clone())
         .spacing(1)
         .flex(Flex::Start)
         .split(Rect::new(0, 0, inner.width, 1));
@@ -58,7 +70,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         (usize::from(columns[1].width), usize::from(columns[2].width));
 
     let playing_id = app.now_playing.as_ref().map(|a| a.id);
-    let rows = app.discover.items.iter().map(|item| {
+    // Only the rows on screen are built: the list can hold a thousand releases.
+    let (window, mut state) = visible_window(app);
+    let rows = app.discover.items[window].iter().map(|item| {
         let marker = if Some(item.id) == playing_id {
             "♪"
         } else if app.queue.contains_release(item.id) {
@@ -70,10 +84,10 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         let title = if item.is_preorder {
             const TAG: &str = "pre ";
             Line::from(vec![
-                Span::styled(TAG, Style::new().fg(Color::Yellow)),
+                Span::styled(TAG, theme().warning),
                 Span::raw(format::truncate(
                     &item.title,
-                    title_width.saturating_sub(TAG.len()),
+                    title_width.saturating_sub(TAG.width()),
                 )),
             ])
         } else {
@@ -86,32 +100,103 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         let length = duration.map_or_else(unknown, |d| {
             Span::raw(format!("{}m", (d.as_secs() + 30) / 60))
         });
-        Row::new([
-            Cell::from(Span::styled(marker, Style::new().fg(ACCENT))),
+        let mut cells = vec![
+            Cell::from(Span::styled(marker, theme().accent)),
             Cell::from(title),
-            Cell::from(format::truncate(&item.artist, artist_width))
-                .style(Style::new().fg(Color::Gray)),
-            Cell::from(Line::from(tracks).right_aligned()),
-            Cell::from(Line::from(length).right_aligned()),
-        ])
+            Cell::from(format::truncate(&item.artist, artist_width)).style(theme().secondary),
+        ];
+        if show_tracks {
+            cells.push(Cell::from(Line::from(tracks).right_aligned()));
+        }
+        cells.push(Cell::from(Line::from(length).right_aligned()));
+        Row::new(cells)
     });
-    let header = Row::new([
-        Cell::from(""),
-        Cell::from("Title"),
-        Cell::from("Artist"),
-        Cell::from(Line::from("Trk").right_aligned()),
-        Cell::from(Line::from("Len").right_aligned()),
-    ])
-    .style(Style::new().dim().add_modifier(Modifier::UNDERLINED));
+    let mut header = vec![Cell::from(""), Cell::from("Title"), Cell::from("Artist")];
+    if show_tracks {
+        header.push(Cell::from(Line::from("Trk").right_aligned()));
+    }
+    header.push(Cell::from(Line::from("Len").right_aligned()));
+    let header = Row::new(header).style(Style::new().dim().add_modifier(Modifier::UNDERLINED));
     // The selection stays visible when the other pane has focus, but quieter.
     let highlight = if focused {
         Style::new().add_modifier(Modifier::REVERSED)
     } else {
         Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
     };
-    let table = Table::new(rows, WIDTHS)
+    let table = Table::new(rows, widths)
         .header(header)
         .block(block)
         .row_highlight_style(highlight);
-    frame.render_stateful_widget(table, area, &mut app.table);
+    frame.render_stateful_widget(table, area, &mut state);
+}
+
+/// The rows to draw, and a table state for just those rows. Scrolls the way ratatui would:
+/// the offset only moves when the selection would leave the screen. Records the new offset.
+fn visible_window(app: &mut App) -> (std::ops::Range<usize>, TableState) {
+    let len = app.discover.items.len();
+    let rows = app.page_rows.max(1);
+    let mut offset = app.table.offset().min(len.saturating_sub(rows));
+    let selected = app.table.selected().map(|s| s.min(len.saturating_sub(1)));
+    if let Some(s) = selected {
+        if s < offset {
+            offset = s;
+        } else if s >= offset + rows {
+            offset = s + 1 - rows;
+        }
+    }
+    *app.table.offset_mut() = offset;
+    let state = TableState::default().with_selected(selected.map(|s| s - offset));
+    (offset..(offset + rows).min(len), state)
+}
+
+/// What the list shows, and where the selection is in it: `Discover · 12/1,947,113`.
+fn title(app: &App) -> String {
+    let name = match &app.source {
+        ListSource::Discover => "Discover",
+        ListSource::Search(_) => "Search results",
+        ListSource::Artist(name) => name,
+    };
+    match app
+        .table
+        .selected()
+        .filter(|_| !app.discover.items.is_empty())
+    {
+        Some(selected) => {
+            let total = app.discover.total.max(app.discover.items.len() as u64);
+            format!(
+                "{name} · {}/{}",
+                format::thousands(selected as u64 + 1),
+                format::thousands(total)
+            )
+        }
+        None => name.to_owned(),
+    }
+}
+
+/// What the list says while it has no releases: loading, failed, or really empty.
+fn empty_text(app: &App) -> Text<'static> {
+    let discover = app.source == ListSource::Discover;
+    if let Some(error) = &app
+        .discover
+        .error
+        .as_ref()
+        .filter(|_| !app.discover.loading)
+    {
+        let (what, next) = if discover {
+            ("Discover", "Press r to retry.")
+        } else {
+            ("these releases", "Press esc to go back to Discover.")
+        };
+        return Text::from(vec![
+            Line::from(format!("Couldn't load {what}: {error}")).patch_style(theme().error),
+            Line::from(next).dim(),
+        ]);
+    }
+    let text = match (discover, app.discover.loading) {
+        (true, true) => "Loading Discover…",
+        (true, false) => "No releases match these filters.",
+        (false, true) => "Loading releases…",
+        (false, false) => "No releases.",
+    };
+    Text::from(Line::from(text).dim())
 }

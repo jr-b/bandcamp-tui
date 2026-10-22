@@ -1,0 +1,16 @@
+---
+source: src/ui/mod.rs
+expression: "render(&mut app, 49, 12).backend()"
+---
+"                                                 "
+"                                                 "
+"                                                 "
+"                                                 "
+"                                                 "
+"               Terminal too small                "
+"               49×12, needs 50×12                "
+"                     q quits                     "
+"                                                 "
+"                                                 "
+"                                                 "
+"                                                 "

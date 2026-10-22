@@ -3,11 +3,13 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 use super::now_playing::{progress_line, state_label};
-use super::{ACCENT, pane};
+use super::pane;
+use super::theme::theme;
 use crate::app::{App, UpNext};
 use crate::art::{Art, ArtBox};
 use crate::bandcamp::Album;
@@ -144,14 +146,14 @@ fn track_lines(
     let track = &album.tracks[index];
     let (icon, state) = state_label(state);
     let mut title = vec![
-        Span::styled(format!("{icon} "), Style::new().fg(ACCENT).bold()),
+        Span::styled(format!("{icon} "), theme().accent.bold()),
         Span::styled(
             format::truncate(&track.title, width).into_owned(),
             Style::new().bold(),
         ),
     ];
     if !state.is_empty() {
-        title.push(Span::styled(state, Style::new().fg(Color::Yellow)));
+        title.push(Span::styled(state, theme().warning));
     }
     let position = format!(
         "{} · track {} of {}",
@@ -200,7 +202,7 @@ fn up_next_line(next: UpNext<'_>, width: usize) -> Line<'static> {
         ),
         UpNext::Autoplay => ("next Discover release (autoplay)".to_owned(), String::new()),
     };
-    let label = format::truncate(&label, width.saturating_sub(6 + more.len())).into_owned();
+    let label = format::truncate(&label, width.saturating_sub(6 + more.width())).into_owned();
     Line::from(vec![
         Span::styled("next: ", Style::new().dim()),
         Span::raw(label),

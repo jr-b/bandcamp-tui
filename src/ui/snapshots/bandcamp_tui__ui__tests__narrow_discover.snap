@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 70, 16).backend()"
 ---
-" bandcamp  Discover · electronic · best-selling    1,947,113 releases "
-"┌ Discover ──────────────────────────────────────────────── loading… ┐"
+" bandcamp  Discover · electronic · best-selling                       "
+"┌ Discover · 1/1,947,113 ────────────────────────────────── loading… ┐"
 "│  Title                              Artist                 Trk  Len│"
 "│  Ocean Company                      Ocean Company           10  38m│"
 "│  Pete Cannon - From The Manor Hous… N4 Records              12  63m│"
@@ -16,5 +16,5 @@ expression: "render(&mut app, 70, 16).backend()"
 "└────────────────────────────────────────────────────────────────────┘"
 " Now playing ──────────────────────────────────────────── autoplay on "
 " Nothing playing. Select a release and press ⏎.                       "
-"                                                                      "
+"                                                             vol 100% "
 " ⏎ play  space pause  tab pane  q quit  / search  ? help  n/p track   "

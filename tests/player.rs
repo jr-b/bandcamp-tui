@@ -1,7 +1,10 @@
 //! Streaming source and player tests against a mock CDN that honours `Range` requests.
 //! Audio goes to an in-memory rodio mixer, so no sound card is needed.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "helpers outside #[test] fail loudly on purpose"
+)]
 
 use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZero;

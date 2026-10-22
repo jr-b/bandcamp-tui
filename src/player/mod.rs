@@ -8,7 +8,6 @@
 //!
 //! [`PlayerHandle`] is the only public entry point. Commands are fire-and-forget; results come
 //! back as [`PlayerEvent`]s, and [`PlayerHandle::status`] gives a cheap snapshot for rendering.
-//! See `PLAN.md` §2.1 for the design and its memory budget.
 
 mod engine;
 mod http_source;

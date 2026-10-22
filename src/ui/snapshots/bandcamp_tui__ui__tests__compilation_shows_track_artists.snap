@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 120, 22).backend()"
 ---
-" bandcamp  Discover · electronic · best-selling                                                      1,947,113 releases "
-"┌ Discover ──────────────────────────────────────────── loading… ┐┌ Album ──────────────────────────────────── i about ┐"
+" bandcamp  Discover · electronic · best-selling                                                                         "
+"┌ Discover · 1/1,947,113 ────────────────────────────── loading… ┐┌ Album ──────────────────────────────────── i about ┐"
 "│  Title                           Artist                Trk  Len││Habibi Funk 035: Beirut City Pop                    │"
 "│  Ocean Company                   Ocean Company          10  38m││by Various Artists · on Habibi Funk Records         │"
 "│  Pete Cannon - From The Manor H… N4 Records             12  63m││10 tracks · 37 min · released 16 Oct 2026 · Berlin,…│"
@@ -22,5 +22,5 @@ expression: "render(&mut app, 120, 22).backend()"
 "└────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────┘"
 " Now playing ────────────────────────────────────────────────────────────────────────────────────────────── autoplay on "
 " Nothing playing. Select a release and press ⏎.                                                                         "
-"                                                                                                                        "
+"                                                                                                               vol 100% "
 " ⏎ play  space pause  tab pane  q quit  / search  ? help  n/p track  ←→ seek  +/- volume  f genre  t time  L place      "

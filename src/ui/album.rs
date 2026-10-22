@@ -2,12 +2,12 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
-use unicode_width::UnicodeWidthStr;
 
-use super::{ACCENT, pane};
+use super::theme::theme;
+use super::{fit, pane};
 use crate::app::{AlbumView, App, Focus};
 use crate::art::{Art, ArtBox};
 use crate::bandcamp::{Album, DiscoverItem};
@@ -25,6 +25,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, compact: bool) 
         let hint = if show_info { " i tracks " } else { " i about " };
         block = block.title(Line::from(hint).right_aligned().dim());
     }
+    app.pane_areas.album = area;
     let inner = block.inner(area);
     frame.render_widget(block, area);
     // Recorded for `App::after_draw`, which fetches or re-encodes the cover at this size.
@@ -50,7 +51,8 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, compact: bool) 
             let mut text = summary_from_item(item, inner.width);
             text.push_line(Line::default());
             text.push_line(
-                Line::from(format!("Couldn't load this release: {error}")).fg(Color::Red),
+                Line::from(format!("Couldn't load this release: {error}"))
+                    .patch_style(theme().error),
             );
             text.push_line(Line::from("Press ⏎ on it to retry.").dim());
             frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), inner);
@@ -109,7 +111,9 @@ fn summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
             .map(|t| format!("#{}", t.norm_name))
             .collect::<Vec<_>>()
             .join(" ");
-        lines.push(Line::from(format::truncate(&tags, width).into_owned()).fg(ACCENT));
+        lines.push(
+            Line::from(format::truncate(&tags, width).into_owned()).patch_style(theme().accent),
+        );
     }
     if album.is_preorder {
         let playable = album.tracks.iter().filter(|t| t.is_playable()).count();
@@ -117,7 +121,7 @@ fn summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
             Line::from(format!(
                 "pre-order · {playable} of {n} tracks streamable now"
             ))
-            .fg(Color::Yellow),
+            .patch_style(theme().warning),
         );
     }
     Text::from(lines)
@@ -168,7 +172,7 @@ fn tall_summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
                 Line::from(format!("pre-order · {playable} of {n} streamable now")),
                 width,
             )
-            .fg(Color::Yellow),
+            .patch_style(theme().warning),
         );
     }
     if !album.tags.is_empty() {
@@ -178,7 +182,9 @@ fn tall_summary(album: &Album, width: u16, rows: u16) -> Text<'static> {
             .map(|t| format!("#{}", t.norm_name))
             .collect::<Vec<_>>()
             .join(" ");
-        lines.push(Line::from(format::truncate(&tags, width).into_owned()).fg(ACCENT));
+        lines.push(
+            Line::from(format::truncate(&tags, width).into_owned()).patch_style(theme().accent),
+        );
     }
     // Fill what's left with the start of the description.
     let room = usize::from(rows).saturating_sub(lines.len() + 1);
@@ -219,27 +225,6 @@ fn summary_from_item(item: &DiscoverItem, width: u16) -> Text<'static> {
         fit(Line::from(by), width),
         fit(Line::from(facts.join(" · ")).dim(), width),
     ])
-}
-
-/// Truncates a styled line to `width` cells, keeping span styles.
-fn fit(line: Line<'static>, width: usize) -> Line<'static> {
-    if line.width() <= width {
-        return line;
-    }
-    let mut remaining = width;
-    let mut spans = Vec::new();
-    for span in line.spans {
-        let w = span.content.width();
-        if w < remaining {
-            remaining -= w;
-            spans.push(span);
-        } else {
-            let cut = format::truncate(&span.content, remaining).into_owned();
-            spans.push(Span::styled(cut, span.style));
-            break;
-        }
-    }
-    Line::from(spans).style(line.style)
 }
 
 /// Where (and whether) to draw the cover: `None` for text-only; otherwise its box and the
@@ -322,10 +307,7 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
         let mut title = vec![Span::raw(track.title.as_str())];
         if track.artist != album.artist {
             title.push(Span::styled(" — ", Style::new().dim()));
-            title.push(Span::styled(
-                track.artist.as_str(),
-                Style::new().fg(Color::Gray),
-            ));
+            title.push(Span::styled(track.artist.as_str(), theme().secondary));
         }
         let duration = if track.duration.is_zero() {
             String::new()
@@ -335,12 +317,12 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
         let style = if !track.is_playable() {
             Style::new().add_modifier(Modifier::DIM)
         } else if is_playing {
-            Style::new().fg(ACCENT).bold()
+            theme().accent.bold()
         } else {
             Style::new()
         };
         Row::new([
-            Cell::from(Span::styled(marker, Style::new().fg(ACCENT))),
+            Cell::from(Span::styled(marker, theme().accent)),
             Cell::from(Line::from(number).right_aligned()),
             Cell::from(Line::from(title)),
             Cell::from(Line::from(duration).right_aligned()),
@@ -359,7 +341,7 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
 /// About, credits and the artist bio, scrolled by `scroll` (clamped here to the text height).
 pub(super) fn draw_info(frame: &mut Frame, area: Rect, album: &Album, scroll: &mut u16) {
     let mut text = summary(album, area.width, 0);
-    let heading = |s: &'static str| Line::from(s).fg(ACCENT).bold();
+    let heading = |s: &'static str| Line::from(s).patch_style(theme().accent).bold();
     let mut section = |title: &'static str, body: &str| {
         text.push_line(Line::default());
         text.push_line(heading(title));
@@ -385,7 +367,11 @@ pub(super) fn draw_info(frame: &mut Frame, area: Rect, album: &Album, scroll: &m
     }
     section("Artist", &artist);
     text.push_line(Line::default());
-    text.push_line(Line::from(album.url.to_string()).fg(ACCENT).underlined());
+    text.push_line(
+        Line::from(album.url.to_string())
+            .patch_style(theme().accent)
+            .underlined(),
+    );
 
     let paragraph = Paragraph::new(text).wrap(Wrap { trim: false });
     // Clamp scrolling to the wrapped text height so you can't scroll into blank space.

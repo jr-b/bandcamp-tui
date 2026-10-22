@@ -2,8 +2,8 @@
 source: src/ui/mod.rs
 expression: "render(&mut app, 120, 24).backend()"
 ---
-" bandcamp  Discover · electronic · best-selling                                                      1,947,113 releases "
-"┌ Discover ──────────────────────────────────────────── loading… ┐┌ Album ─────────────────────────────────────────────┐"
+" bandcamp  Discover · electronic · best-selling                                                                         "
+"┌ Discover · 3/1,947,113 ────────────────────────────── loading… ┐┌ Album ─────────────────────────────────────────────┐"
 "│  Title                           Artist                Trk  Len││Invisible Places                                    │"
 "│♪ Ocean Company                   Ocean Company          10  38m││by Martin Stürtzer                                  │"
 "│+ Pete Cannon - From The Manor H… N4 Records             12  63m││released 16 Oct 2026 · Wuppertal, Germany           │"

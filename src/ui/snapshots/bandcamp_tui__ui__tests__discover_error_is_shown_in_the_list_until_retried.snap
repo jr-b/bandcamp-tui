@@ -1,0 +1,18 @@
+---
+source: src/ui/mod.rs
+expression: "render(&mut app, 80, 14).backend()"
+---
+" bandcamp  Discover · all genres · best-selling                                 "
+"┌ Discover ────────────────────────────────┐┌ Album ───────────────────────────┐"
+"│                                          ││                                  │"
+"│                                          ││                                  │"
+"│   Couldn't load Discover: error sending  ││                                  │"
+"│        request: connection refused       ││                                  │"
+"│             Press r to retry.            ││                                  │"
+"│                                          ││                                  │"
+"│                                          ││                                  │"
+"└──────────────────────────────────────────┘└──────────────────────────────────┘"
+" Now playing ────────────────────────────────────────────────────── autoplay on "
+" Nothing playing. Select a release and press ⏎.                                 "
+"                                                                       vol 100% "
+" ⏎ play  space pause  tab pane  q quit  / search  ? help  n/p track  ←→ seek    "

@@ -9,23 +9,38 @@ mod now_playing;
 mod picker;
 mod queue;
 mod search;
+pub mod theme;
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::layout::{Constraint, Flex, Layout, Rect};
+use ratatui::style::{Style, Stylize};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Block, Paragraph, Wrap};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
 use crate::format;
-use crate::input::{HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
+use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
+use crate::text_input::TextInput;
+use theme::theme;
 
-const ACCENT: Color = Color::Cyan;
 /// Below this width only the focused pane is shown.
-const TWO_PANE_MIN_WIDTH: u16 = 90;
+const TWO_PANE_MIN_WIDTH: u16 = 80;
+
+/// Below this size the UI doesn't fit; a message says so instead.
+pub const MIN_WIDTH: u16 = 50;
+pub const MIN_HEIGHT: u16 = 12;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    let area = frame.area();
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        // Nothing shows a cover: don't download or encode one for a stale layout.
+        app.album_pane.art_box = None;
+        app.listening.art_box = None;
+        draw_too_small(frame, area);
+        return;
+    }
     // The listening view shows the track and progress itself: no now-playing bar.
     let bar_rows = if app.screen == Screen::Listening {
         0
@@ -40,6 +55,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(frame.area());
 
+    app.pane_areas = crate::app::PaneAreas::default();
     draw_header(frame, header, app);
     if app.screen == Screen::Listening {
         listening::draw(frame, body, app);
@@ -68,8 +84,48 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.queue_view.is_some() {
         queue::draw(frame, body, app);
     }
-    if app.show_help {
-        help::draw(frame, frame.area());
+    if let Some(view) = app.help.as_mut() {
+        help::draw(frame, frame.area(), view);
+    }
+}
+
+fn draw_too_small(frame: &mut Frame, area: Rect) {
+    let text = Text::from(vec![
+        Line::from("Terminal too small").bold(),
+        Line::from(format!(
+            "{}×{}, needs {MIN_WIDTH}×{MIN_HEIGHT}",
+            area.width, area.height
+        ))
+        .dim(),
+        Line::from("q quits").dim(),
+    ]);
+    let paragraph = Paragraph::new(text).centered().wrap(Wrap { trim: true });
+    let height = u16::try_from(paragraph.line_count(area.width))
+        .unwrap_or(u16::MAX)
+        .min(area.height);
+    let [middle] = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .areas(area);
+    frame.render_widget(paragraph, middle);
+}
+
+/// A popup's one-line text field: a prompt, the text (scrolled to keep the cursor in view) or a
+/// dim placeholder, and the terminal's cursor where typing goes.
+fn draw_input(frame: &mut Frame, area: Rect, input: &TextInput, placeholder: &str) {
+    const PROMPT: &str = "› ";
+    let prompt = Span::styled(PROMPT, theme().accent);
+    let room = usize::from(area.width).saturating_sub(PROMPT.width());
+    let (line, column) = if input.is_empty() {
+        let hint = Span::styled(placeholder.to_owned(), Style::new().dim());
+        (Line::from(vec![prompt, hint]), 0)
+    } else {
+        let (text, column) = input.window(room);
+        (Line::from(vec![prompt, Span::raw(text.to_owned())]), column)
+    };
+    frame.render_widget(line, area);
+    let column = u16::try_from(column + PROMPT.width()).unwrap_or(u16::MAX);
+    if column < area.width {
+        frame.set_cursor_position((area.x + column, area.y));
     }
 }
 
@@ -78,11 +134,32 @@ fn pane(title: &str, focused: bool) -> Block<'static> {
     let block = Block::bordered().title(format!(" {title} "));
     if focused {
         block
-            .border_style(Style::new().fg(ACCENT))
+            .border_style(theme().accent)
             .title_style(Style::new().bold())
     } else {
         block.border_style(Style::new().dim())
     }
+}
+
+/// Truncates a styled line to `width` cells, keeping span styles.
+pub(super) fn fit(line: Line<'static>, width: usize) -> Line<'static> {
+    if line.width() <= width {
+        return line;
+    }
+    let mut remaining = width;
+    let mut spans = Vec::new();
+    for span in line.spans {
+        let w = span.width();
+        if w < remaining {
+            remaining -= w;
+            spans.push(span);
+        } else {
+            let cut = format::truncate(&span.content, remaining).into_owned();
+            spans.push(Span::styled(cut, span.style));
+            break;
+        }
+    }
+    Line::from(spans).style(line.style)
 }
 
 fn slice_label(slice: Slice) -> &'static str {
@@ -94,10 +171,7 @@ fn slice_label(slice: Slice) -> &'static str {
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let mut left = vec![Span::styled(
-        " bandcamp ",
-        Style::new().fg(Color::Black).bg(ACCENT).bold(),
-    )];
+    let mut left = vec![Span::styled(" bandcamp ", theme().brand)];
     let parts = match &app.source {
         ListSource::Discover => {
             left.push(Span::raw(" Discover"));
@@ -119,30 +193,35 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         left.push(Span::styled(part, Style::new().bold()));
     }
     let left = Line::from(left);
-    let right = if app.discover.total > 0 {
-        let mut text = format!("{} releases ", format::thousands(app.discover.total));
-        if app.source != ListSource::Discover {
-            text.push_str("· esc back ");
-        }
-        Line::from(text).dim()
-    } else {
+    // The list's title shows the position and count; only the way back goes here.
+    let mut right = if app.source == ListSource::Discover {
         Line::default()
+    } else {
+        Line::from("esc back ").dim()
     };
-    let width = u16::try_from(right.width()).unwrap_or(u16::MAX);
-    let [l, r] = Layout::horizontal([Constraint::Min(0), Constraint::Length(width)]).areas(area);
-    frame.render_widget(left, l);
+    // The filters matter more than the hint: drop it rather than let them touch.
+    let width = usize::from(area.width);
+    if left.width() + 1 + right.width() > width {
+        right = Line::default();
+    }
+    let right_width = u16::try_from(right.width()).unwrap_or(u16::MAX);
+    let [l, r] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(right_width)]).areas(area);
+    frame.render_widget(fit(left, usize::from(l.width)), l);
     frame.render_widget(right, r);
 }
 
 fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
     let line = match &app.message {
-        Some(m) if m.kind == MessageKind::Error => {
-            Line::from(format!(" {}", m.text)).fg(Color::Red).bold()
-        }
-        Some(m) => Line::from(format!(" {}", m.text)).fg(ACCENT),
+        Some(m) if m.kind == MessageKind::Error => Line::from(format!(" {}", m.text))
+            .patch_style(theme().error)
+            .bold(),
+        Some(m) => Line::from(format!(" {}", m.text)).patch_style(theme().accent),
         None => {
             // Show as many whole hints as fit; they're ordered by importance.
-            let hints = if app.picker.is_some() || app.search_open {
+            let hints = if app.help.is_some() {
+                HELP_HINTS
+            } else if app.picker.is_some() || app.search_open {
                 PICKER_HINTS
             } else if app.queue_view.is_some() {
                 QUEUE_HINTS
@@ -155,7 +234,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             let mut used = 1;
             for (i, (keys, what)) in hints.iter().enumerate() {
                 let gap = if i > 0 { 2 } else { 0 };
-                let width = gap + keys.chars().count() + 1 + what.len();
+                let width = gap + keys.width() + 1 + what.width();
                 if used + width > usize::from(area.width) {
                     break;
                 }
@@ -163,7 +242,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
                 if gap > 0 {
                     spans.push(Span::raw("  "));
                 }
-                spans.push(Span::styled(*keys, Style::new().fg(ACCENT)));
+                spans.push(Span::styled(*keys, theme().accent));
                 spans.push(Span::styled(format!(" {what}"), Style::new().dim()));
             }
             Line::from(spans)
@@ -179,6 +258,7 @@ mod tests {
 
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
 
     use super::*;
     use crate::app::{Action, Effect};
@@ -336,7 +416,10 @@ mod tests {
         });
         let terminal = render(&mut app, 100, 16);
         let text = format!("{}", terminal.backend());
-        assert!(text.contains("‖ Joyride — Ocean Company"), "{text}");
+        assert!(
+            text.contains("‖ Joyride (paused) — Ocean Company"),
+            "{text}"
+        );
         assert!(text.contains("1:12 ━━"), "{text}");
         assert!(text.contains("3:51   vol  80%"), "{text}");
     }
@@ -347,7 +430,7 @@ mod tests {
         app.update(Action::OpenPicker(crate::picker::PickerKind::Genre));
         insta::assert_snapshot!("genre_picker", render(&mut app, 100, 24).backend());
         for c in "tech".chars() {
-            app.update(Action::TypeChar(c));
+            app.update(Action::Edit(crate::text_input::Edit::Insert(c)));
         }
         insta::assert_snapshot!("genre_picker_search", render(&mut app, 100, 24).backend());
     }
@@ -414,8 +497,8 @@ mod tests {
         app.art_enabled = true;
         show_album(&mut app, fixture_album("album"));
         app.update(Action::FocusAlbum);
-        // 80 columns: single pane. Tall enough that the wide layout would go bigger.
-        render(&mut app, 80, 60);
+        // 79 columns: single pane. Tall enough that the wide layout would go bigger.
+        render(&mut app, 79, 60);
         let art_box = app.album_pane.art_box.unwrap();
         assert!(art_box.rows <= 8, "{art_box:?}");
     }
@@ -435,7 +518,7 @@ mod tests {
         app.update(Action::OpenSearch);
         insta::assert_snapshot!("search_empty", render(&mut app, 110, 24).backend());
         for c in "aphex twin".chars() {
-            app.update(Action::TypeChar(c));
+            app.update(Action::Edit(crate::text_input::Edit::Insert(c)));
         }
         let generation = match app.update(Action::SearchDue(10))[..] {
             [Effect::FetchSearch { generation, .. }] => generation,
@@ -489,6 +572,226 @@ mod tests {
         insta::assert_snapshot!(render(&mut app, 100, 36).backend());
     }
 
+    fn first_row(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn header_cuts_long_filters_with_an_ellipsis() {
+        let mut app = app_with_page();
+        let narrow = first_row(&render(&mut app, 60, 16));
+        assert!(narrow.contains("best-selling"), "{narrow}");
+        app.query.tags = vec!["electronic".into(), "techno".into(), "ambient".into()];
+        let cut = first_row(&render(&mut app, 50, 16));
+        assert!(cut.trim_end().ends_with('…'), "{cut}");
+    }
+
+    #[test]
+    fn search_input_keeps_the_cursor_in_view() {
+        use crate::text_input::Edit;
+        let mut app = app_with_page();
+        app.update(Action::OpenSearch);
+        let long = "a very long search query that will not fit in the box at all";
+        for c in long.chars() {
+            app.update(Action::Edit(Edit::Insert(c)));
+        }
+        let mut terminal = render(&mut app, 60, 20);
+        let cursor = terminal.get_cursor_position().unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..60).map(|x| buffer[(x, cursor.y)].symbol()).collect();
+        assert!(row.contains("in the box at all"), "{row}");
+        assert!(
+            !row.contains("a very long"),
+            "the start scrolled off: {row}"
+        );
+        let typed_up_to_cursor: String = (0..cursor.x)
+            .map(|x| buffer[(x, cursor.y)].symbol())
+            .collect();
+        assert!(
+            typed_up_to_cursor.ends_with("at all"),
+            "{typed_up_to_cursor}"
+        );
+
+        app.update(Action::Edit(Edit::Home));
+        let mut terminal = render(&mut app, 60, 20);
+        let cursor = terminal.get_cursor_position().unwrap();
+        let buffer = terminal.backend().buffer();
+        let row: String = (0..60).map(|x| buffer[(x, cursor.y)].symbol()).collect();
+        assert!(row.contains("› a very long"), "{row}");
+        assert_eq!(buffer[(cursor.x, cursor.y)].symbol(), "a");
+    }
+
+    /// Every cell's colours, to check a theme end to end.
+    fn colors(terminal: &Terminal<TestBackend>) -> Vec<Color> {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .flat_map(|cell| [cell.fg, cell.bg])
+            .collect()
+    }
+
+    #[test]
+    fn no_color_theme_uses_no_colors() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("preorder"));
+        app.update(Action::Play);
+        app.update(Action::Notice("hello".into()));
+        theme::set(&theme::COLOR);
+        assert!(colors(&render(&mut app, 100, 24)).contains(&Color::Cyan));
+
+        theme::set(&theme::MONO);
+        let mut screens = vec![render(&mut app, 100, 24)];
+        app.update(Action::OpenSearch);
+        screens.push(render(&mut app, 100, 24));
+        app.update(Action::ClosePopup);
+        app.update(Action::ShowHelp);
+        screens.push(render(&mut app, 100, 24));
+        app.update(Action::CloseHelp);
+        app.update(Action::ToggleListening);
+        screens.push(render(&mut app, 100, 24));
+        theme::set(&theme::COLOR);
+        for screen in &screens {
+            assert!(
+                colors(screen).iter().all(|c| *c == Color::Reset),
+                "{}",
+                screen.backend()
+            );
+        }
+    }
+
+    fn screen_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn long_lists_scroll_with_the_selection() {
+        let mut app = app_with_page();
+        let template = app.discover.items[0].clone();
+        app.discover.items = (0..200)
+            .map(|i| crate::bandcamp::DiscoverItem {
+                id: crate::bandcamp::ItemId(i + 1),
+                title: format!("Release {i:03}"),
+                ..template.clone()
+            })
+            .collect();
+        app.update(Action::Bottom);
+        let text = screen_text(&render(&mut app, 80, 20));
+        assert!(
+            text.contains("Release 199") && !text.contains("Release 000"),
+            "{text}"
+        );
+        assert!(text.contains("200/"), "{text}");
+        let offset = app.table.offset();
+        // Moving within the screen keeps the offset; moving past it scrolls.
+        app.update(Action::Up);
+        render(&mut app, 80, 20);
+        assert_eq!(app.table.offset(), offset);
+        app.update(Action::Top);
+        let text = screen_text(&render(&mut app, 80, 20));
+        assert_eq!(app.table.offset(), 0);
+        assert!(
+            text.contains("Release 000") && !text.contains("Release 199"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_wheel_scrolls_the_pane_under_the_pointer() {
+        let wheel = |down, column, row| Action::Wheel { down, column, row };
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 120, 24);
+        let (list, album) = (app.pane_areas.list, app.pane_areas.album);
+        assert!(list.width > 0 && album.width > 0);
+
+        app.update(wheel(true, album.x + 2, album.y + 12));
+        assert_eq!(app.focus, Focus::Album);
+        assert_eq!(app.album_pane.tracks.selected(), Some(1));
+        assert_eq!(app.table.selected(), Some(0), "the list didn't move");
+
+        app.update(wheel(true, list.x + 2, list.y + 3));
+        assert_eq!(app.focus, Focus::Discover);
+        assert_eq!(app.table.selected(), Some(1));
+
+        // Popups take the wheel wherever the pointer is.
+        app.update(Action::OpenSearch);
+        app.update(wheel(true, album.x + 2, album.y + 2));
+        assert_eq!(app.focus, Focus::Discover, "focus stays behind a popup");
+        app.update(Action::ClosePopup);
+        app.update(Action::ShowHelp);
+        render(&mut app, 120, 24);
+        app.update(wheel(true, 0, 0));
+        assert_eq!(app.help.as_ref().map(|h| h.scroll), Some(1));
+        assert!(app.help.is_some(), "the wheel doesn't close help");
+    }
+
+    #[test]
+    fn two_panes_at_80x24() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        insta::assert_snapshot!(render(&mut app, 80, 24).backend());
+    }
+
+    #[test]
+    fn too_small_says_so() {
+        let mut app = app_with_page();
+        insta::assert_snapshot!(render(&mut app, 49, 12).backend());
+        let ok = render(&mut app, 50, 12);
+        assert!(first_row(&ok).contains("bandcamp"));
+        let short = render(&mut app, 80, 11);
+        assert!(!first_row(&short).contains("bandcamp"));
+    }
+
+    #[test]
+    fn discover_error_is_shown_in_the_list_until_retried() {
+        let (mut app, effects) = App::new(DiscoverQuery::default(), true);
+        let Some(Effect::FetchDiscover { generation, .. }) = effects.into_iter().next() else {
+            panic!("no initial fetch");
+        };
+        app.update(Action::DiscoverLoaded {
+            generation,
+            result: Err("error sending request: connection refused".into()),
+        });
+        // A keypress clears the footer message; the list still says what went wrong.
+        app.update(Action::Down);
+        assert!(app.message.is_none());
+        insta::assert_snapshot!(render(&mut app, 80, 14).backend());
+        app.update(Action::Refresh);
+        assert!(app.discover.error.is_none(), "retrying clears the error");
+    }
+
+    #[test]
+    fn help_scrolls_at_80x24() {
+        let mut app = app_with_page();
+        app.update(Action::ShowHelp);
+        insta::assert_snapshot!("help_80x24_top", render(&mut app, 80, 24).backend());
+        app.update(Action::Bottom);
+        insta::assert_snapshot!("help_80x24_bottom", render(&mut app, 80, 24).backend());
+        assert!(app.help.is_some(), "scrolling keeps help open");
+        app.update(Action::CloseHelp);
+        assert!(app.help.is_none());
+    }
+
+    #[test]
+    fn help_uses_two_columns_when_wide() {
+        let mut app = app_with_page();
+        app.update(Action::ShowHelp);
+        insta::assert_snapshot!(render(&mut app, 140, 30).backend());
+    }
+
     fn listening_to_joyride(app: &mut App, state: PlaybackState) {
         show_album(app, fixture_album("album"));
         app.update(Action::Play);
@@ -503,6 +806,44 @@ mod tests {
             },
         });
         app.update(Action::ToggleListening);
+    }
+
+    /// The sizes every layout must work at: the common terminal, a tmux split, the minimum.
+    const CONTRACT_SIZES: [(u16, u16); 3] = [(80, 24), (60, 20), (MIN_WIDTH, MIN_HEIGHT)];
+
+    #[test]
+    fn contract_sizes() {
+        for (width, height) in CONTRACT_SIZES {
+            let size = format!("{width}x{height}");
+            let mut app = app_with_page();
+            listening_to_joyride(&mut app, PlaybackState::Playing);
+            app.update(Action::ToggleListening);
+            insta::assert_snapshot!(
+                format!("browse_playing_{size}"),
+                render(&mut app, width, height).backend()
+            );
+
+            app.update(Action::Enqueue);
+            app.update(Action::OpenQueue);
+            insta::assert_snapshot!(
+                format!("queue_{size}"),
+                render(&mut app, width, height).backend()
+            );
+            app.update(Action::ClosePopup);
+
+            app.update(Action::OpenSearch);
+            insta::assert_snapshot!(
+                format!("search_{size}"),
+                render(&mut app, width, height).backend()
+            );
+            app.update(Action::ClosePopup);
+
+            app.update(Action::ToggleListening);
+            insta::assert_snapshot!(
+                format!("listening_{size}"),
+                render(&mut app, width, height).backend()
+            );
+        }
     }
 
     #[test]
@@ -600,7 +941,7 @@ mod tests {
         app.query.tags = vec!["electronic".into(), "techno".into()];
         app.query.time_facet_id = Some(1);
         app.query.geoname_id = 2_950_159;
-        let terminal = render(&mut app, 120, 10);
+        let terminal = render(&mut app, 120, 12);
         let first_line: String = (0..120)
             .map(|x| terminal.backend().buffer()[(x, 0)].symbol().to_owned())
             .collect();
