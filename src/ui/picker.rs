@@ -2,11 +2,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 
-use super::theme::theme;
+use super::theme::{self, theme};
 use crate::picker::Picker;
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) {
@@ -59,7 +59,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) {
         return;
     }
     let list_widget = List::new(items)
-        .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+        .highlight_style(theme::SELECTED)
         .highlight_symbol("› ");
     frame.render_stateful_widget(list_widget, list, &mut picker.list);
 }

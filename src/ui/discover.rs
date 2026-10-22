@@ -8,7 +8,7 @@ use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use super::pane;
-use super::theme::theme;
+use super::theme::{self, theme};
 use crate::app::{App, Focus, ListSource};
 use crate::format;
 
@@ -103,7 +103,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
         let mut cells = vec![
             Cell::from(Span::styled(marker, theme().accent)),
             Cell::from(title),
-            Cell::from(format::truncate(&item.artist, artist_width)).style(theme().secondary),
+            Cell::from(format::truncate(&item.artist, artist_width)),
         ];
         if show_tracks {
             cells.push(Cell::from(Line::from(tracks).right_aligned()));
@@ -119,9 +119,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let header = Row::new(header).style(Style::new().dim().add_modifier(Modifier::UNDERLINED));
     // The selection stays visible when the other pane has focus, but quieter.
     let highlight = if focused {
-        Style::new().add_modifier(Modifier::REVERSED)
+        theme::SELECTED
     } else {
-        Style::new().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        theme::SELECTED_UNFOCUSED
     };
     let table = Table::new(rows, widths)
         .header(header)

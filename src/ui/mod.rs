@@ -162,6 +162,21 @@ pub(super) fn fit(line: Line<'static>, width: usize) -> Line<'static> {
     Line::from(spans).style(line.style)
 }
 
+/// `title — artist` in `width` cells: the title first, then as much of the artist as fits. The
+/// dash is dim; the artist keeps full contrast, like the title.
+pub(super) fn title_by(title: &str, artist: &str, width: usize) -> Vec<Span<'static>> {
+    const SEP: &str = " — ";
+    let title = format::truncate(title, width).into_owned();
+    let room = width.saturating_sub(title.width());
+    let mut spans = vec![Span::raw(title)];
+    if room > SEP.width() {
+        spans.push(Span::styled(SEP, Style::new().dim()));
+        let artist = format::truncate(artist, room - SEP.width()).into_owned();
+        spans.push(Span::raw(artist));
+    }
+    spans
+}
+
 fn slice_label(slice: Slice) -> &'static str {
     match slice {
         Slice::Top => "best-selling",
@@ -622,6 +637,54 @@ mod tests {
         let row: String = (0..60).map(|x| buffer[(x, cursor.y)].symbol()).collect();
         assert!(row.contains("› a very long"), "{row}");
         assert_eq!(buffer[(cursor.x, cursor.y)].symbol(), "a");
+    }
+
+    /// The modifiers of the cells where `text` is first drawn on screen.
+    fn modifiers_of(terminal: &Terminal<TestBackend>, text: &str) -> Vec<ratatui::style::Modifier> {
+        let buffer = terminal.backend().buffer();
+        let width = usize::from(buffer.area.width);
+        let len = text.chars().count();
+        let cells = buffer.content();
+        let start = (0..cells.len())
+            .find(|&i| {
+                i % width + len <= width
+                    && cells[i..i + len]
+                        .iter()
+                        .map(ratatui::buffer::Cell::symbol)
+                        .collect::<String>()
+                        == text
+            })
+            .unwrap_or_else(|| panic!("{text:?} not on screen:\n{}", terminal.backend()));
+        cells[start..start + len]
+            .iter()
+            .map(|c| c.modifier)
+            .collect()
+    }
+
+    #[test]
+    fn artist_names_are_not_dim() {
+        use ratatui::style::Modifier;
+        let mut app = app_with_page();
+        // The first row is selected (reversed), the second isn't.
+        let artists: Vec<String> = app.discover.items[..2]
+            .iter()
+            .map(|item| item.artist.chars().take(8).collect())
+            .collect();
+        for focus_album in [false, true] {
+            if focus_album {
+                app.update(Action::FocusAlbum);
+            }
+            let terminal = render(&mut app, 120, 24);
+            for artist in &artists {
+                assert!(
+                    modifiers_of(&terminal, artist)
+                        .iter()
+                        .all(|m| !m.contains(Modifier::DIM)),
+                    "{artist:?} is dim:\n{}",
+                    terminal.backend()
+                );
+            }
+        }
     }
 
     /// Every cell's colours, to check a theme end to end.
