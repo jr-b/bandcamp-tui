@@ -7,7 +7,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
 
 use super::theme::{self, theme};
-use super::{fit, pane};
+use super::{Metrics, fit, pane};
 use crate::app::{AlbumView, App, Focus};
 use crate::art::{Art, ArtBox};
 use crate::bandcamp::{Album, DiscoverItem};
@@ -17,10 +17,15 @@ use crate::format;
 const TALL_HEADER_ROWS: u16 = 8;
 
 /// `compact`: the narrow single-pane layout, which keeps the cover small.
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, compact: bool) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metrics, compact: bool) {
     let focused = app.focus == Focus::Album;
     let show_info = app.album_pane.show_info;
-    let mut block = pane(if show_info { "About" } else { "Album" }, focused);
+    let mut block = pane(
+        if show_info { "About" } else { "Album" },
+        focused,
+        metrics,
+        false,
+    );
     if matches!(app.album_view(), AlbumView::Loaded(_)) {
         let hint = if show_info { " i tracks " } else { " i about " };
         block = block.title(Line::from(hint).right_aligned().dim());

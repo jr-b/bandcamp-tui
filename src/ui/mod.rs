@@ -14,8 +14,9 @@ pub mod theme;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Style, Stylize};
+use ratatui::symbols::border;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, ListSource, MessageKind, Screen};
@@ -37,6 +38,8 @@ const SHORT_HEIGHT: u16 = 30;
 pub(super) struct Metrics {
     /// A one-line player bar; autoplay and up-next move to the footer.
     pub compact_bar: bool,
+    /// Panes are a title rule instead of a box.
+    pub borderless: bool,
 }
 
 impl Metrics {
@@ -47,6 +50,7 @@ impl Metrics {
                 Density::Compact => true,
                 Density::Comfortable => false,
             },
+            borderless: density == Density::Compact,
         }
     }
 
@@ -87,17 +91,17 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     app.pane_areas = crate::app::PaneAreas::default();
     draw_header(frame, header, app);
     if app.screen == Screen::Listening {
-        listening::draw(frame, body, app);
+        listening::draw(frame, body, app, metrics);
     } else if body.width >= TWO_PANE_MIN_WIDTH {
         let [list, album] =
             Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .areas(body);
-        discover::draw(frame, list, app);
-        album::draw(frame, album, app, false);
+        discover::draw(frame, list, app, metrics, true);
+        album::draw(frame, album, app, metrics, false);
     } else {
         match app.focus {
-            Focus::Discover => discover::draw(frame, body, app),
-            Focus::Album => album::draw(frame, body, app, true),
+            Focus::Discover => discover::draw(frame, body, app, metrics, false),
+            Focus::Album => album::draw(frame, body, app, metrics, true),
         }
     }
     if app.screen == Screen::Browse {
@@ -158,9 +162,31 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &TextInput, placeholder: &st
     }
 }
 
-/// A bordered pane, highlighted when focused.
-fn pane(title: &str, focused: bool) -> Block<'static> {
-    let block = Block::bordered().title(format!(" {title} "));
+/// A bordered pane, highlighted when focused. Borderless, it keeps the title rule on top (and a
+/// vertical rule on its right edge if `divider` is set, between two panes).
+fn pane(title: &str, focused: bool, metrics: Metrics, divider: bool) -> Block<'static> {
+    let block = if metrics.borderless {
+        let (borders, set) = if divider {
+            (
+                Borders::TOP | Borders::RIGHT,
+                border::Set {
+                    top_right: "┬",
+                    ..border::PLAIN
+                },
+            )
+        } else {
+            (Borders::TOP, border::PLAIN)
+        };
+        // Without side borders the text would touch the edges; the divider is its own margin.
+        let right = u16::from(!divider);
+        Block::new()
+            .borders(borders)
+            .border_set(set)
+            .padding(Padding::new(1, right, 0, 0))
+    } else {
+        Block::bordered()
+    }
+    .title(format!(" {title} "));
     if focused {
         block
             .border_style(theme().accent)
@@ -1048,6 +1074,21 @@ mod tests {
         assert!(footer.contains("next: "), "{footer}");
         assert!(footer.trim_start().starts_with("⏎ play"), "{footer}");
         assert!(!lines[..23].iter().any(|l| l.contains("autoplay")));
+    }
+
+    #[test]
+    fn compact_density_drops_the_pane_borders() {
+        let mut app = app_with_page();
+        app.density = Density::Compact;
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleListening);
+        insta::assert_snapshot!("compact_80x24", render(&mut app, 80, 24).backend());
+        insta::assert_snapshot!("compact_50x12", render(&mut app, 50, 12).backend());
+        app.update(Action::ToggleListening);
+        insta::assert_snapshot!(
+            "compact_listening_80x24",
+            render(&mut app, 80, 24).backend()
+        );
     }
 
     #[test]

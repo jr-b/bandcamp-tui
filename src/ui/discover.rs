@@ -7,8 +7,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::pane;
 use super::theme::{self, theme};
+use super::{Metrics, pane};
 use crate::app::{App, Focus, ListSource};
 use crate::format;
 
@@ -30,9 +30,10 @@ fn widths(show_tracks: bool) -> Vec<Constraint> {
     widths
 }
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
+/// `divider`: another pane sits to the right.
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metrics, divider: bool) {
     let focused = app.focus == Focus::Discover;
-    let mut block = pane(&title(app), focused);
+    let mut block = pane(&title(app), focused, metrics, divider);
     if app.discover.loading {
         block = block.title(
             Line::from(" loading… ")
