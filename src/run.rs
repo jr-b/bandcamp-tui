@@ -159,6 +159,22 @@ pub async fn run(
     result
 }
 
+/// Zooming the terminal changes its cell size in pixels, and so the cover's pixel size. Re-read
+/// it from the window size (the startup query can't be repeated: it reads stdin). Terminals that
+/// don't report pixels keep the size detected at startup.
+fn refresh_art_font(app: &mut App) {
+    if !app.art_enabled {
+        return;
+    }
+    let font = ratatui::crossterm::terminal::window_size()
+        .ok()
+        .and_then(|size| crate::art::font_from_window(&size));
+    if let Some(font) = font {
+        tracing::debug!(?font, "cell size");
+        app.art_font = font;
+    }
+}
+
 async fn event_loop(
     terminal: &mut DefaultTerminal,
     app: &mut App,
@@ -186,7 +202,10 @@ async fn event_loop(
             event = input.next() => match event {
                 Some(Ok(Event::Key(key))) => input::action_for(key, input_mode(app)),
                 Some(Ok(Event::Mouse(mouse))) => input::mouse_action(mouse),
-                Some(Ok(Event::Resize(..))) => Some(Action::Resize),
+                Some(Ok(Event::Resize(..))) => {
+                    refresh_art_font(app);
+                    Some(Action::Resize)
+                }
                 Some(Ok(_)) => None,
                 Some(Err(e)) => return Err(e),
                 None => break, // stdin closed

@@ -18,7 +18,7 @@ impl App {
     /// The image size needed for the cover box as last drawn.
     pub(super) fn wanted_art_size(&self) -> Option<ImageSize> {
         let art_box = self.art_box()?;
-        Some(crate::art::source_size(art_box, self.art_font))
+        Some(crate::art::source_size(art_box))
     }
 
     /// Whether cover `id` still has to be downloaded (or re-downloaded bigger).
@@ -71,7 +71,10 @@ impl App {
             .arts
             .iter()
             .filter(|((art_id, b), _)| {
-                *art_id == id && b.rows <= art_box.rows && b.cols <= art_box.cols
+                *art_id == id
+                    && b.cell == art_box.cell
+                    && b.rows <= art_box.rows
+                    && b.cols <= art_box.cols
             })
             .max_by_key(|((_, b), _)| b.rows)
             .map(|(_, art)| art);
