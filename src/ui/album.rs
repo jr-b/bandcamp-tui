@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Cell, Paragraph, Row, Table, Wrap};
 
-use super::theme::theme;
+use super::theme::{self, theme};
 use super::{fit, pane};
 use crate::app::{AlbumView, App, Focus};
 use crate::art::{Art, ArtBox};
@@ -307,7 +307,7 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
         let mut title = vec![Span::raw(track.title.as_str())];
         if track.artist != album.artist {
             title.push(Span::styled(" — ", Style::new().dim()));
-            title.push(Span::styled(track.artist.as_str(), theme().secondary));
+            title.push(Span::raw(track.artist.as_str()));
         }
         let duration = if track.duration.is_zero() {
             String::new()
@@ -330,7 +330,7 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
         .style(style)
     });
     let highlight = if focused {
-        Style::new().add_modifier(Modifier::REVERSED)
+        theme::SELECTED
     } else {
         Style::new()
     };

@@ -3,6 +3,11 @@
 //!
 //! Nothing relies on colour alone: playing rows have a ♪, states are spelled out, the selection
 //! is reversed. The monochrome theme only drops the colours.
+//!
+//! Dim is for chrome and labels around content (hints, borders, separators, counts, "by "),
+//! never for the content itself: names of releases, artists, albums and tracks stay in the
+//! terminal's own foreground. How dim renders is up to the terminal, and on many it blends the
+//! text halfway into the background, well under the 4.5:1 contrast text needs (WCAG 1.4.3).
 
 use std::cell::Cell;
 
@@ -12,8 +17,6 @@ use ratatui::style::{Color, Modifier, Style};
 pub struct Theme {
     /// Focused borders, markers, keys in hints, progress, links.
     pub accent: Style,
-    /// Secondary text next to primary text, e.g. the artist beside a title.
-    pub secondary: Style,
     /// Something to note but not a failure: pre-orders, buffering, paused.
     pub warning: Style,
     pub error: Style,
@@ -26,8 +29,6 @@ pub struct Theme {
 /// The default: cyan accent, yellow notes, red errors.
 pub const COLOR: Theme = Theme {
     accent: Style::new().fg(Color::Cyan),
-    // Dim rather than `Color::Gray`, which is near-invisible on light backgrounds.
-    secondary: Style::new().add_modifier(Modifier::DIM),
     warning: Style::new().fg(Color::Yellow),
     error: Style::new().fg(Color::Red),
     badge: Style::new().fg(Color::Magenta),
@@ -40,12 +41,23 @@ pub const COLOR: Theme = Theme {
 /// For `NO_COLOR`: only bold, dim and reverse.
 pub const MONO: Theme = Theme {
     accent: Style::new(),
-    secondary: Style::new().add_modifier(Modifier::DIM),
     warning: Style::new(),
     error: Style::new().add_modifier(Modifier::BOLD),
     badge: Style::new(),
     brand: Style::new().add_modifier(Modifier::REVERSED.union(Modifier::BOLD)),
 };
+
+/// The selected row of a focused list. Dim parts of the row are lifted: reversed dim text is
+/// a blend of the foreground on itself and close to unreadable.
+pub const SELECTED: Style = Style::new()
+    .add_modifier(Modifier::REVERSED)
+    .remove_modifier(Modifier::DIM);
+
+/// The selected row of a list that doesn't have focus: still findable, but quieter. Bold and dim
+/// share an off switch (SGR 22), so many terminals can't show both; dim gives way here too.
+pub const SELECTED_UNFOCUSED: Style = Style::new()
+    .add_modifier(Modifier::BOLD.union(Modifier::UNDERLINED))
+    .remove_modifier(Modifier::DIM);
 
 impl Theme {
     /// [`MONO`] if `NO_COLOR` is set to anything non-empty, else [`COLOR`].

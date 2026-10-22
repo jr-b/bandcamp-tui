@@ -2,12 +2,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
-use unicode_width::UnicodeWidthStr;
 
-use super::theme::theme;
+use super::theme::{self, theme};
 use crate::app::App;
 use crate::bandcamp::TralbumKind;
 use crate::format;
@@ -76,19 +75,16 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
                 (None, TralbumKind::Track) => ("track", entry.title.as_str()),
                 (None, TralbumKind::Album) => ("album", entry.title.as_str()),
             };
-            let title = format::truncate(title, text_width).into_owned();
-            let room = text_width.saturating_sub(title.width());
-            let by = format::truncate(&format!(" — {}", entry.artist), room).into_owned();
-            ListItem::new(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!("{:>2}  ", i + 1), Style::new().dim()),
                 Span::styled(format!("{badge:<7}"), theme().accent),
-                Span::raw(title),
-                Span::styled(by, theme().secondary),
-            ]))
+            ];
+            spans.extend(super::title_by(title, &entry.artist, text_width));
+            ListItem::new(Line::from(spans))
         })
         .collect();
     let widget = List::new(items)
-        .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+        .highlight_style(theme::SELECTED)
         .highlight_symbol("› ");
     if let Some(view) = app.queue_view.as_mut() {
         frame.render_stateful_widget(widget, list, view);

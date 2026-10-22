@@ -2,11 +2,11 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 
-use super::theme::theme;
+use super::theme::{self, theme};
 use crate::app::SearchBox;
 use crate::bandcamp::{SearchResult, TralbumKind};
 use crate::format;
@@ -72,7 +72,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
         .map(|result| ListItem::new(result_line(result, text_width)))
         .collect();
     let widget = List::new(items)
-        .highlight_style(Style::new().add_modifier(Modifier::REVERSED))
+        .highlight_style(theme::SELECTED)
         .highlight_symbol("› ");
     frame.render_stateful_widget(widget, list, &mut search.list);
 }
@@ -107,14 +107,9 @@ fn result_line(result: &SearchResult, width: usize) -> Line<'static> {
                 TralbumKind::Album => "album",
                 TralbumKind::Track => "track",
             };
-            let title = format::truncate(&item.title, width).into_owned();
-            let room = width.saturating_sub(unicode_width::UnicodeWidthStr::width(title.as_str()));
-            let by = format::truncate(&format!(" — {}", item.artist), room).into_owned();
-            Line::from(vec![
-                badge(label, theme().accent),
-                Span::raw(title),
-                Span::styled(by, theme().secondary),
-            ])
+            let mut spans = vec![badge(label, theme().accent)];
+            spans.extend(super::title_by(&item.title, &item.artist, width));
+            Line::from(spans)
         }
     }
 }

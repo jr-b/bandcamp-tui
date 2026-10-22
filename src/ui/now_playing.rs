@@ -73,7 +73,8 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(state, theme().warning),
         Span::raw(" — "),
         Span::raw(track.artist.clone()),
-        Span::styled(format!(" · {}", album.title), Style::new().dim()),
+        Span::styled(" · ", Style::new().dim()),
+        Span::raw(album.title.clone()),
         Span::styled(
             format!(" · {}/{}", index + 1, album.tracks.len()),
             Style::new().dim(),
