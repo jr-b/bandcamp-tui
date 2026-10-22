@@ -67,6 +67,8 @@ pub struct Services {
     pub autoplay: bool,
     /// Switch to the listening view when the queue starts a release (from `config.toml`).
     pub listen_on_queue: bool,
+    /// How tightly to pack the layout (from `config.toml`).
+    pub density: crate::config::Density,
     /// Browsing or the listening view, as last time.
     pub screen: crate::app::Screen,
     /// The saved play queue (restored without starting playback).
@@ -111,6 +113,7 @@ pub async fn run(
         art_note,
         autoplay,
         listen_on_queue,
+        density,
         screen,
         queue,
     } = services;
@@ -123,6 +126,7 @@ pub async fn run(
     }
     app.autoplay = autoplay;
     app.listen_on_queue = listen_on_queue;
+    app.density = density;
     app.screen = screen;
     app.queue = crate::queue::Queue::from_saved(queue);
     if let Some(note) = art_note {

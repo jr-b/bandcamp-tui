@@ -12,6 +12,9 @@
 //! # Colours: "auto" (dark or light, from the terminal's background), "dark", "light", or
 //! # "mono" (no colour). `NO_COLOR` turns "auto" into "mono".
 //! theme = "auto"
+//! # How much room the layout keeps for itself: "auto" (a one-line player bar on short
+//! # terminals), "compact" (also drops the pane borders), or "comfortable" (never compacts).
+//! density = "auto"
 //!
 //! # Optional: replace the colour of a role. Names follow the terminal's own palette:
 //! # "black" "red" "green" "yellow" "blue" "magenta" "cyan" "white", each also with a
@@ -55,6 +58,18 @@ pub enum ThemeChoice {
     Mono,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Density {
+    /// Compact the chrome (one-line player bar) when the terminal is short.
+    #[default]
+    Auto,
+    /// Always compact the chrome, and drop the pane borders.
+    Compact,
+    /// Never compact.
+    Comfortable,
+}
+
 /// Per-role colours that replace the theme's. See [`crate::ui::theme::Theme`] for the roles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -80,6 +95,7 @@ pub struct Config {
     /// Switch to the listening view whenever the queue starts a release.
     pub listen_on_queue: bool,
     pub theme: ThemeChoice,
+    pub density: Density,
     pub colors: Colors,
 }
 
@@ -90,6 +106,7 @@ impl Default for Config {
             autoplay: true,
             listen_on_queue: false,
             theme: ThemeChoice::default(),
+            density: Density::default(),
             colors: Colors::default(),
         }
     }
@@ -228,6 +245,20 @@ mod tests {
         assert!(Config::load(&path).unwrap().autoplay);
         let path = write("autoplay-off", "autoplay = false\n");
         assert!(!Config::load(&path).unwrap().autoplay);
+    }
+
+    #[test]
+    fn density_defaults_to_auto() {
+        assert_eq!(Config::default().density, Density::Auto);
+        for (text, expected) in [
+            ("density = \"compact\"", Density::Compact),
+            ("density = \"comfortable\"", Density::Comfortable),
+        ] {
+            let path = write("density", text);
+            assert_eq!(Config::load(&path).unwrap().density, expected, "{text}");
+        }
+        let path = write("density-bad", "density = \"tiny\"");
+        assert!(Config::load(&path).is_err());
     }
 
     #[test]

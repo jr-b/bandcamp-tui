@@ -20,6 +20,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
+use crate::config::Density;
 use crate::format;
 use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
 use crate::text_input::TextInput;
@@ -27,6 +28,33 @@ use theme::theme;
 
 /// Below this width only the focused pane is shown.
 const TWO_PANE_MIN_WIDTH: u16 = 80;
+
+/// Terminals shorter than this get the compact chrome under `density = "auto"`.
+const SHORT_HEIGHT: u16 = 30;
+
+/// How the chrome is packed for this frame, from the `density` setting and the terminal size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Metrics {
+    /// A one-line player bar; autoplay and up-next move to the footer.
+    pub compact_bar: bool,
+}
+
+impl Metrics {
+    fn resolve(density: Density, height: u16) -> Self {
+        Self {
+            compact_bar: match density {
+                Density::Auto => height < SHORT_HEIGHT,
+                Density::Compact => true,
+                Density::Comfortable => false,
+            },
+        }
+    }
+
+    /// Rows the player bar takes in the browse screen.
+    fn bar_rows(self) -> u16 {
+        if self.compact_bar { 1 } else { 3 }
+    }
+}
 
 /// Below this size the UI doesn't fit; a message says so instead.
 pub const MIN_WIDTH: u16 = 50;
@@ -42,10 +70,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
     // The listening view shows the track and progress itself: no now-playing bar.
+    let metrics = Metrics::resolve(app.density, area.height);
     let bar_rows = if app.screen == Screen::Listening {
         0
     } else {
-        3
+        metrics.bar_rows()
     };
     let [header, body, now_playing, footer] = Layout::vertical([
         Constraint::Length(1),
@@ -72,9 +101,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         }
     }
     if app.screen == Screen::Browse {
-        now_playing::draw(frame, now_playing, app);
+        now_playing::draw(frame, now_playing, app, metrics);
     }
-    draw_footer(frame, footer, app);
+    draw_footer(frame, footer, app, metrics);
     if let Some(picker) = app.picker.as_mut() {
         picker::draw(frame, body, picker);
     }
@@ -226,7 +255,46 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(right, r);
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+/// `autoplay on · next: Passage (+2)`: the status the one-line player bar has no room for.
+fn footer_status(app: &App, width: usize) -> Line<'static> {
+    let dim = Style::new().dim();
+    let autoplay = if app.autoplay {
+        Span::styled("autoplay on", theme().accent)
+    } else {
+        Span::styled("autoplay off", dim)
+    };
+    let mut spans = vec![autoplay];
+    if let Some((next, more)) = app.up_next() {
+        let more = if more > 0 {
+            format!(" (+{more})")
+        } else {
+            String::new()
+        };
+        let label = format::truncate(&next.label(), width / 3).into_owned();
+        spans.push(Span::styled(" · next: ", dim));
+        spans.push(Span::raw(label));
+        spans.push(Span::styled(more, dim));
+    }
+    spans.push(Span::raw(" "));
+    Line::from(spans)
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
+    // Hints are cut first; the status stays unless it would take the whole line.
+    let mut status = Line::default();
+    let plain = app.message.is_none()
+        && app.help.is_none()
+        && app.picker.is_none()
+        && !app.search_open
+        && app.queue_view.is_none();
+    if metrics.compact_bar && app.screen == Screen::Browse && plain {
+        status = footer_status(app, usize::from(area.width));
+        if status.width() + 12 > usize::from(area.width) {
+            status = Line::default();
+        }
+    }
+    let gap = if status.width() > 0 { 2 } else { 0 };
+    let hint_room = usize::from(area.width).saturating_sub(status.width() + gap);
     let line = match &app.message {
         Some(m) if m.kind == MessageKind::Error => Line::from(format!(" {}", m.text))
             .patch_style(theme().error)
@@ -250,7 +318,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             for (i, (keys, what)) in hints.iter().enumerate() {
                 let gap = if i > 0 { 2 } else { 0 };
                 let width = gap + keys.width() + 1 + what.width();
-                if used + width > usize::from(area.width) {
+                if used + width > hint_room {
                     break;
                 }
                 used += width;
@@ -263,7 +331,11 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Line::from(spans)
         }
     };
-    frame.render_widget(Paragraph::new(line), area);
+    let status_width = u16::try_from(status.width()).unwrap_or(u16::MAX);
+    let [left, right] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).areas(area);
+    frame.render_widget(Paragraph::new(line), left);
+    frame.render_widget(status, right);
 }
 
 #[cfg(test)]
@@ -571,6 +643,7 @@ mod tests {
         app.update(Action::Enqueue);
         app.update(Action::Down);
         app.update(Action::Enqueue);
+        app.message = None;
         let terminal = render(&mut app, 120, 24);
         let text = format!("{}", terminal.backend());
         assert!(text.contains("next: Pete Cannon"), "{text}");
@@ -925,6 +998,56 @@ mod tests {
                 render(&mut app, width, height).backend()
             );
         }
+    }
+
+    fn text_of(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn density_sets_the_player_bar_height() {
+        // (density, terminal height, rows from the track line down to the footer)
+        for (density, height, rows) in [
+            (Density::Auto, 24, 1),
+            (Density::Auto, SHORT_HEIGHT, 2),
+            (Density::Compact, 40, 1),
+            (Density::Comfortable, 24, 2),
+        ] {
+            let mut app = app_with_page();
+            app.density = density;
+            listening_to_joyride(&mut app, PlaybackState::Playing);
+            app.update(Action::ToggleListening);
+            let lines = text_of(&render(&mut app, 100, height));
+            let bar = lines.iter().rposition(|l| l.contains("Joyride")).unwrap();
+            // The bar is just above the footer line.
+            assert_eq!(
+                usize::from(height) - 1 - bar,
+                rows,
+                "{density:?} at {height}: {lines:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_bar_moves_autoplay_and_up_next_to_the_footer() {
+        let mut app = app_with_page();
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleListening);
+        app.update(Action::Enqueue);
+        app.message = None;
+        let lines = text_of(&render(&mut app, 100, 24));
+        let footer = lines.last().unwrap();
+        assert!(footer.contains("autoplay on"), "{footer}");
+        assert!(footer.contains("next: "), "{footer}");
+        assert!(footer.trim_start().starts_with("⏎ play"), "{footer}");
+        assert!(!lines[..23].iter().any(|l| l.contains("autoplay")));
     }
 
     #[test]

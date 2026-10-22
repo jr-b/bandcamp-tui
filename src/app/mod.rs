@@ -398,6 +398,8 @@ pub struct App {
     pub screen: Screen,
     /// Switch to the listening view whenever the queue starts a release (`config.toml`).
     pub listen_on_queue: bool,
+    /// How tightly the layout is packed (`config.toml`).
+    pub density: crate::config::Density,
     pub album_pane: AlbumPane,
     /// Set while rendering.
     pub pane_areas: PaneAreas,
@@ -471,6 +473,7 @@ impl App {
             focus: Focus::Discover,
             screen: Screen::Browse,
             listen_on_queue: false,
+            density: crate::config::Density::default(),
             album_pane: AlbumPane::default(),
             pane_areas: PaneAreas::default(),
             listening: ListeningPane::default(),

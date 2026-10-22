@@ -84,7 +84,12 @@ album_art = "auto"        # "auto", "on" or "off"
 autoplay = true           # start the next Discover release when the queue ends
 listen_on_queue = false   # open the listening view when the queue starts a release
 theme = "auto"            # "auto", "dark", "light" or "mono"
+density = "auto"          # "auto", "compact" or "comfortable"
 ```
+
+### Density
+
+On a short terminal the chrome (borders, player bar, footer) takes a third of the screen. `auto` shrinks the player bar to one line under 30 rows. `compact` does that always and also drops the pane borders. `comfortable` never compacts.
 
 ### Colours
 
