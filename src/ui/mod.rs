@@ -704,10 +704,10 @@ mod tests {
         show_album(&mut app, fixture_album("preorder"));
         app.update(Action::Play);
         app.update(Action::Notice("hello".into()));
-        theme::set(&theme::COLOR);
+        theme::set(theme::DARK);
         assert!(colors(&render(&mut app, 100, 24)).contains(&Color::Cyan));
 
-        theme::set(&theme::MONO);
+        theme::set(theme::MONO);
         let mut screens = vec![render(&mut app, 100, 24)];
         app.update(Action::OpenSearch);
         screens.push(render(&mut app, 100, 24));
@@ -717,7 +717,7 @@ mod tests {
         app.update(Action::CloseHelp);
         app.update(Action::ToggleListening);
         screens.push(render(&mut app, 100, 24));
-        theme::set(&theme::COLOR);
+        theme::set(theme::DARK);
         for screen in &screens {
             assert!(
                 colors(screen).iter().all(|c| *c == Color::Reset),
@@ -725,6 +725,24 @@ mod tests {
                 screen.backend()
             );
         }
+    }
+
+    #[test]
+    fn light_theme_avoids_cyan_and_yellow() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("preorder"));
+        app.update(Action::Play);
+        theme::set(theme::LIGHT);
+        let used = colors(&render(&mut app, 100, 24));
+        theme::set(theme::DARK);
+        assert!(used.contains(&Color::Blue), "accent");
+        assert!(used.contains(&Color::Magenta), "the pre-order note");
+        assert!(
+            !used
+                .iter()
+                .any(|c| matches!(c, Color::Cyan | Color::Yellow)),
+            "{used:?}"
+        );
     }
 
     fn screen_text(terminal: &Terminal<TestBackend>) -> String {

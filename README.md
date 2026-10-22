@@ -83,7 +83,25 @@ Optional `config.toml` in `~/Library/Application Support/bandcamp-tui/` (macOS) 
 album_art = "auto"        # "auto", "on" or "off"
 autoplay = true           # start the next Discover release when the queue ends
 listen_on_queue = false   # open the listening view when the queue starts a release
+theme = "auto"            # "auto", "dark", "light" or "mono"
 ```
+
+### Colours
+
+`auto` asks the terminal for its background colour and picks the dark palette (cyan accent, yellow notes) or the light one (blue accent, magenta notes). If the terminal doesn't say, it falls back to `COLORFGBG`, then to dark. `NO_COLOR` turns `auto` into `mono`. A theme set explicitly wins over `NO_COLOR`.
+
+Both palettes use your terminal's 16 ANSI colours, so they follow its colour scheme. To change a role, add any of these:
+
+```toml
+[colors]
+accent = "blue"       # focus, markers, key hints, progress
+warning = "magenta"   # pre-orders, paused, buffering
+error = "red"
+badge = "magenta"     # artist and label badges in search
+brand = "blue"        # the "bandcamp" label in the header
+```
+
+Values: `black` `red` `green` `yellow` `blue` `magenta` `cyan` `white`, each also as `bright-…`; `0`–`255`; `"#rrggbb"` (needs a truecolor terminal); or `"default"`. Prefer the names: hex values ignore the terminal's colour scheme, and nothing checks their contrast. Colour never carries meaning alone; every state is also spelled out in text.
 
 ### Cover art and tmux
 
