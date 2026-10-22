@@ -9,6 +9,7 @@ use bandcamp_tui::config::{AlbumArt, Config};
 use bandcamp_tui::player::{Output, PlayerConfig, PlayerHandle, UrlRefresher};
 use bandcamp_tui::run::{Services, run};
 use bandcamp_tui::settings::Settings;
+use bandcamp_tui::ui::theme::{self, Theme};
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::{Result, WrapErr};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
@@ -140,6 +141,14 @@ fn main() -> Result<()> {
             None
         }
     };
+
+    // Before raw mode: the query sets and restores it itself. `block_on` renders on this thread.
+    theme::set(Theme::resolve(
+        config.theme,
+        &config.colors,
+        theme::no_color(),
+        theme::detect_background,
+    ));
 
     // Installs a panic hook that restores the terminal before the color-eyre report prints.
     let mut terminal = ratatui::init();
