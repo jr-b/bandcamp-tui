@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::theme::{self, theme};
 use super::{Metrics, pane};
-use crate::app::{App, Focus, ListSource};
+use crate::app::{AlbumView, App, Focus, ListSource};
 use crate::format;
 
 /// Below this inner width the track count column is left out, so titles keep their room.
@@ -43,6 +43,10 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
     }
     app.pane_areas.list = area;
     let inner = block.inner(area);
+    // Alone on screen, the list has no album pane beside it: one row says what's selected.
+    let strip = !divider && !app.discover.items.is_empty() && inner.height > STRIP_MIN_HEIGHT;
+    let [inner, strip_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(u16::from(strip))]).areas(inner);
     // One row is the column header.
     app.page_rows = usize::from(inner.height.saturating_sub(1));
 
@@ -126,9 +130,49 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
     };
     let table = Table::new(rows, widths)
         .header(header)
-        .block(block)
         .row_highlight_style(highlight);
-    frame.render_stateful_widget(table, area, &mut state);
+    frame.render_widget(block, area);
+    frame.render_stateful_widget(table, inner, &mut state);
+    if strip {
+        frame.render_widget(
+            selection_strip(app, usize::from(strip_area.width)),
+            strip_area,
+        );
+    }
+}
+
+/// The list needs at least this many inner rows to give one up to the selection strip.
+const STRIP_MIN_HEIGHT: u16 = 8;
+
+/// `10 tracks · 38 min · released 16 Oct 2026 · Wuppertal, Germany · #electronic #chill`: what the
+/// album pane would say about the selected release, in one dim line.
+fn selection_strip(app: &App, width: usize) -> Line<'static> {
+    let Some(item) = app.selected() else {
+        return Line::default();
+    };
+    let (tracks, duration) = app.release_size(item);
+    let mut facts = Vec::new();
+    if let Some(n) = tracks {
+        facts.push(format!("{n} track{}", if n == 1 { "" } else { "s" }));
+    }
+    if let Some(d) = duration {
+        facts.push(format::length(d));
+    }
+    if let Some(date) = item.release_date {
+        let verb = if item.is_preorder { "out" } else { "released" };
+        facts.push(format!("{verb} {date}"));
+    }
+    if let Some(location) = &item.band_location {
+        facts.push(location.clone());
+    }
+    let mut line = facts.join(" · ");
+    if let AlbumView::Loaded(album) = app.album_view() {
+        for tag in album.tags.iter().take(3) {
+            line.push_str(" #");
+            line.push_str(&tag.norm_name);
+        }
+    }
+    super::fit(Line::from(format!(" {line}")).dim(), width)
 }
 
 /// The rows to draw, and a table state for just those rows. Scrolls the way ratatui would:

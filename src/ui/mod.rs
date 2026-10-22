@@ -27,8 +27,9 @@ use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS
 use crate::text_input::TextInput;
 use theme::theme;
 
-/// Below this width only the focused pane is shown.
-const TWO_PANE_MIN_WIDTH: u16 = 80;
+/// Below this width only the focused pane is shown. A cover and the text beside it need about
+/// 40 columns, which with the list's 55% means 100.
+const TWO_PANE_MIN_WIDTH: u16 = 100;
 
 /// Terminals shorter than this get the compact chrome under `density = "auto"`.
 const SHORT_HEIGHT: u16 = 30;
@@ -919,8 +920,18 @@ mod tests {
     }
 
     #[test]
-    fn two_panes_at_80x24() {
+    fn two_panes_at_100x24() {
         let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        insta::assert_snapshot!(render(&mut app, 100, 24).backend());
+    }
+
+    #[test]
+    fn single_pane_at_80x24_describes_the_selection() {
+        let mut app = app_with_page();
+        let lines = text_of(&render(&mut app, 80, 24));
+        let strip = lines.iter().find(|l| l.contains("released")).unwrap();
+        assert!(strip.contains("10 tracks · 38 min"), "{strip}");
         show_album(&mut app, fixture_album("album"));
         insta::assert_snapshot!(render(&mut app, 80, 24).backend());
     }
