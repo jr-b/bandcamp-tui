@@ -41,6 +41,8 @@ pub(super) struct Metrics {
     pub compact_bar: bool,
     /// Panes are a title rule instead of a box.
     pub borderless: bool,
+    /// The list's underlined "Title Artist Len" row.
+    pub list_header: bool,
 }
 
 impl Metrics {
@@ -52,6 +54,7 @@ impl Metrics {
                 Density::Comfortable => false,
             },
             borderless: density == Density::Compact,
+            list_header: density != Density::Compact,
         }
     }
 
@@ -1120,6 +1123,7 @@ mod tests {
         listening_to_joyride(&mut app, PlaybackState::Playing);
         app.update(Action::ToggleListening);
         insta::assert_snapshot!("compact_80x24", render(&mut app, 80, 24).backend());
+        insta::assert_snapshot!("compact_110x24", render(&mut app, 110, 24).backend());
         insta::assert_snapshot!("compact_50x12", render(&mut app, 50, 12).backend());
         app.update(Action::ToggleListening);
         insta::assert_snapshot!(

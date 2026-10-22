@@ -47,8 +47,8 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
     let strip = !divider && !app.discover.items.is_empty() && inner.height > STRIP_MIN_HEIGHT;
     let [inner, strip_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(u16::from(strip))]).areas(inner);
-    // One row is the column header.
-    app.page_rows = usize::from(inner.height.saturating_sub(1));
+    let header_rows = u16::from(metrics.list_header);
+    app.page_rows = usize::from(inner.height.saturating_sub(header_rows));
 
     if app.discover.items.is_empty() {
         frame.render_widget(block, area);
@@ -128,9 +128,10 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
     } else {
         theme::SELECTED_UNFOCUSED
     };
-    let table = Table::new(rows, widths)
-        .header(header)
-        .row_highlight_style(highlight);
+    let mut table = Table::new(rows, widths).row_highlight_style(highlight);
+    if metrics.list_header {
+        table = table.header(header);
+    }
     frame.render_widget(block, area);
     frame.render_stateful_widget(table, inner, &mut state);
     if strip {
