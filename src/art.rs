@@ -22,7 +22,9 @@ const COMPACT_MAX_ROWS: u16 = 8;
 /// The text beside the cover always gets at least this many columns.
 pub const MIN_TEXT_COLS: u16 = 28;
 /// At least this many tracklist rows stay visible under the cover.
-const MIN_TRACK_ROWS: u16 = 6;
+const MIN_TRACK_ROWS: u16 = 8;
+/// The cover takes at most this share of the pane's width; the text beside it gets the rest.
+const MAX_WIDTH_PERCENT: u16 = 35;
 /// The cover takes at most this share of the pane's height.
 const MAX_HEIGHT_PERCENT: u16 = 45;
 /// Cover heights for the listening view, which is all about the cover.
@@ -76,7 +78,8 @@ pub fn layout(width: u16, height: u16, font: FontSize, compact: bool) -> Option<
     let (cell_w, cell_h) = (u32::from(font.width.max(1)), u32::from(font.height.max(1)));
     // Columns needed for `rows` rows so the cover is square in pixels.
     let cols_for = |rows: u16| (u32::from(rows) * cell_h).div_ceil(cell_w);
-    let max_cols = u32::from(width.saturating_sub(MIN_TEXT_COLS + 1));
+    let max_cols = u32::from(width.saturating_sub(MIN_TEXT_COLS + 1))
+        .min(u32::from(width) * u32::from(MAX_WIDTH_PERCENT) / 100);
     let max_rows = (height * MAX_HEIGHT_PERCENT / 100)
         .min(height.saturating_sub(MIN_TRACK_ROWS + 1))
         .min(if compact { COMPACT_MAX_ROWS } else { u16::MAX });
@@ -366,23 +369,23 @@ pub(crate) mod tests {
             layout(120, 30, FONT, false),
             Some(ArtBox::new(24, 12, FONT))
         );
-        // Width-limited: 60 - 29 = 31 columns for the cover, so 12 rows (24 cols) fits, 16 doesn't.
-        assert_eq!(layout(60, 60, FONT, false), Some(ArtBox::new(24, 12, FONT)));
+        // Width-limited: the cover gets 35 % of 60 columns = 21, so 10 rows (20 cols) fits.
+        assert_eq!(layout(60, 60, FONT, false), Some(ArtBox::new(20, 10, FONT)));
         // Just above the smallest step.
-        assert_eq!(layout(41, 14, FONT, false), Some(ArtBox::new(12, 6, FONT)));
+        assert_eq!(layout(41, 16, FONT, false), Some(ArtBox::new(12, 6, FONT)));
     }
 
     #[test]
     fn hides_when_there_is_no_room() {
         assert_eq!(layout(40, 60, FONT, false), None, "text needs 28 columns");
-        assert_eq!(layout(120, 12, FONT, false), None, "tracklist needs 6 rows");
+        assert_eq!(layout(120, 12, FONT, false), None, "tracklist needs 8 rows");
         assert_eq!(layout(0, 0, FONT, false), None);
     }
 
     #[test]
     fn compact_caps_the_size() {
         assert_eq!(layout(120, 60, FONT, true), Some(ArtBox::new(16, 8, FONT)));
-        assert_eq!(layout(120, 14, FONT, true), Some(ArtBox::new(12, 6, FONT)));
+        assert_eq!(layout(120, 16, FONT, true), Some(ArtBox::new(12, 6, FONT)));
     }
 
     #[test]
@@ -421,11 +424,11 @@ pub(crate) mod tests {
         // The same window zoomed 1.5×: fewer, bigger cells.
         let zoomed = FontSize::new(15, 30);
         let art_box = layout(80, 40, zoomed, false).unwrap();
-        assert_eq!(art_box, ArtBox::new(32, 16, zoomed));
+        assert_eq!(art_box, ArtBox::new(24, 12, zoomed));
         assert_eq!(
             source_size(art_box),
             ImageSize::Px700,
-            "480 px tall at the new size"
+            "360 px tall at the new size"
         );
     }
 

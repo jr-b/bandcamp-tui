@@ -34,7 +34,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
     let inner = block.inner(area);
     frame.render_widget(block, area);
     // Recorded for `App::after_draw`, which fetches or re-encodes the cover at this size.
-    app.album_pane.art_box = if app.art_enabled {
+    app.album_pane.art_box = if app.art_enabled && !app.cover_hidden {
         crate::art::layout(inner.width, inner.height, app.art_font, compact)
     } else {
         None

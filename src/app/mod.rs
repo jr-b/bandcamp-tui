@@ -71,6 +71,8 @@ pub enum Action {
     FocusAlbum,
     /// Album pane: switch between the tracklist and the about/credits/bio text.
     ToggleInfo,
+    /// Hide or show the cover in the album pane (`C`).
+    ToggleCover,
     /// Switch between browsing and the listening view (`v`).
     ToggleListening,
     /// Continue with the next Discover release when an album ends.
@@ -409,6 +411,8 @@ pub struct App {
     albums: Lru<ItemId, Arc<Album>>,
     /// Whether the terminal shows cover art (decided once at startup).
     pub art_enabled: bool,
+    /// The user hid the album pane's cover (`C`) to give the text and tracklist the room.
+    pub cover_hidden: bool,
     /// The terminal's cell size in pixels, for sizing covers (set with `art_enabled`).
     pub art_font: ratatui_image::FontSize,
     art_sources: Lru<ArtId, ArtSource>,
@@ -480,6 +484,7 @@ impl App {
             picker: None,
             albums: Lru::new(ALBUM_CACHE_SIZE),
             art_enabled: false,
+            cover_hidden: false,
             art_font: ratatui_image::FontSize::new(10, 20),
             art_sources: Lru::new(ART_SOURCE_CACHE_SIZE),
             arts: Lru::new(ART_CACHE_SIZE),
@@ -604,6 +609,10 @@ impl App {
             | Action::FocusAlbum
             | Action::ToggleInfo => {
                 self.view_update(&action);
+                vec![]
+            }
+            Action::ToggleCover => {
+                self.cover_hidden = !self.cover_hidden;
                 vec![]
             }
             Action::ToggleListening => {

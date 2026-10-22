@@ -593,6 +593,21 @@ mod tests {
     }
 
     #[test]
+    fn cover_can_be_hidden_and_shown() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 120, 24);
+        assert!(app.album_pane.art_box.is_some());
+        app.update(Action::ToggleCover);
+        render(&mut app, 120, 24);
+        assert!(app.album_pane.art_box.is_none(), "hidden");
+        app.update(Action::ToggleCover);
+        render(&mut app, 120, 24);
+        assert!(app.album_pane.art_box.is_some(), "shown again");
+    }
+
+    #[test]
     fn cover_grows_with_the_terminal() {
         let mut app = app_with_page();
         app.art_enabled = true;
