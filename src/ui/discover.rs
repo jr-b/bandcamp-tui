@@ -4,13 +4,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use super::theme::{self, theme};
 use super::{Metrics, pane};
 use crate::app::{AlbumView, App, Focus, ListSource};
 use crate::format;
+
+const LOADING: &str = " loading… ";
 
 /// Below this inner width the track count column is left out, so titles keep their room.
 const TRACKS_COLUMN_MIN_WIDTH: u16 = 50;
@@ -30,17 +32,38 @@ fn widths(show_tracks: bool) -> Vec<Constraint> {
     widths
 }
 
+/// The pane around the list. Its title is cut with an ellipsis rather than let it run into the
+/// loading note on the right.
+fn list_block(
+    app: &App,
+    width: u16,
+    focused: bool,
+    metrics: Metrics,
+    divider: bool,
+) -> Block<'static> {
+    let note = if app.discover.loading {
+        LOADING.width() + 1
+    } else {
+        0
+    };
+    let room = usize::from(width).saturating_sub(4 + note);
+    let title = format::truncate(&title(app, metrics), room).into_owned();
+    let block = pane(&title, focused, metrics, divider);
+    if app.discover.loading {
+        block.title(
+            Line::from(LOADING)
+                .right_aligned()
+                .patch_style(theme().accent),
+        )
+    } else {
+        block
+    }
+}
+
 /// `divider`: another pane sits to the right.
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metrics, divider: bool) {
     let focused = app.focus == Focus::Discover;
-    let mut block = pane(&title(app), focused, metrics, divider);
-    if app.discover.loading {
-        block = block.title(
-            Line::from(" loading… ")
-                .right_aligned()
-                .patch_style(theme().accent),
-        );
-    }
+    let block = list_block(app, area.width, focused, metrics, divider);
     app.pane_areas.list = area;
     let inner = block.inner(area);
     // Alone on screen, the list has no album pane beside it: one row says what's selected.
@@ -195,26 +218,36 @@ fn visible_window(app: &mut App) -> (std::ops::Range<usize>, TableState) {
     (offset..(offset + rows).min(len), state)
 }
 
-/// What the list shows, and where the selection is in it: `Discover · 12/1,947,113`.
-fn title(app: &App) -> String {
+/// What the list shows, and where the selection is in it: `Discover · 12/1,947,113`. When the
+/// header shows the playing track instead, the filters come here: `electronic · new · 12/340`.
+/// The position goes first there, so a narrow pane cuts the filters rather than the position.
+fn title(app: &App, metrics: Metrics) -> String {
+    let position = app
+        .table
+        .selected()
+        .filter(|_| !app.discover.items.is_empty())
+        .map(|selected| {
+            let total = app.discover.total.max(app.discover.items.len() as u64);
+            format!(
+                "{}/{}",
+                format::thousands(selected as u64 + 1),
+                format::thousands(total)
+            )
+        });
+    if super::track_in_header(app, metrics) {
+        let filters = super::source_parts(app).1.join(" · ");
+        return match position {
+            Some(position) => format!("{position} · {filters}"),
+            None => filters,
+        };
+    }
     let name = match &app.source {
         ListSource::Discover => "Discover",
         ListSource::Search(_) => "Search results",
         ListSource::Artist(name) => name,
     };
-    match app
-        .table
-        .selected()
-        .filter(|_| !app.discover.items.is_empty())
-    {
-        Some(selected) => {
-            let total = app.discover.total.max(app.discover.items.len() as u64);
-            format!(
-                "{name} · {}/{}",
-                format::thousands(selected as u64 + 1),
-                format::thousands(total)
-            )
-        }
+    match position {
+        Some(position) => format!("{name} · {position}"),
         None => name.to_owned(),
     }
 }

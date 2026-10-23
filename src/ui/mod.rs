@@ -33,12 +33,24 @@ const TWO_PANE_MIN_WIDTH: u16 = 100;
 
 /// Terminals shorter than this get the compact chrome under `density = "auto"`.
 const SHORT_HEIGHT: u16 = 30;
+/// Terminals shorter than this show the playing track in the header instead of a player bar.
+const TINY_HEIGHT: u16 = 16;
+
+/// Where the browse screen shows what's playing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Bar {
+    /// Three rows: a title rule with autoplay and up-next, the track, the progress.
+    Full,
+    /// One row: the track and progress; autoplay and up-next move to the footer.
+    Compact,
+    /// No bar: the header shows the playing track, the list title the filters.
+    InHeader,
+}
 
 /// How the chrome is packed for this frame, from the `density` setting and the terminal size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Metrics {
-    /// A one-line player bar; autoplay and up-next move to the footer.
-    pub compact_bar: bool,
+    pub bar: Bar,
     /// Panes are a title rule instead of a box.
     pub borderless: bool,
     /// The list's underlined "Title Artist Len" row.
@@ -47,12 +59,14 @@ pub(super) struct Metrics {
 
 impl Metrics {
     fn resolve(density: Density, height: u16) -> Self {
+        let bar = match density {
+            Density::Comfortable => Bar::Full,
+            _ if height < TINY_HEIGHT => Bar::InHeader,
+            Density::Auto if height >= SHORT_HEIGHT => Bar::Full,
+            _ => Bar::Compact,
+        };
         Self {
-            compact_bar: match density {
-                Density::Auto => height < SHORT_HEIGHT,
-                Density::Compact => true,
-                Density::Comfortable => false,
-            },
+            bar,
             borderless: density == Density::Compact,
             list_header: density != Density::Compact,
         }
@@ -60,7 +74,11 @@ impl Metrics {
 
     /// Rows the player bar takes in the browse screen.
     fn bar_rows(self) -> u16 {
-        if self.compact_bar { 1 } else { 3 }
+        match self.bar {
+            Bar::Full => 3,
+            Bar::Compact => 1,
+            Bar::InHeader => 0,
+        }
     }
 }
 
@@ -93,7 +111,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     .areas(frame.area());
 
     app.pane_areas = crate::app::PaneAreas::default();
-    draw_header(frame, header, app);
+    draw_header(frame, header, app, metrics);
     if app.screen == Screen::Listening {
         listening::draw(frame, body, app, metrics);
     } else if body.width >= TWO_PANE_MIN_WIDTH {
@@ -108,7 +126,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Focus::Album => album::draw(frame, body, app, metrics, true),
         }
     }
-    if app.screen == Screen::Browse {
+    if app.screen == Screen::Browse && bar_rows > 0 {
         now_playing::draw(frame, now_playing, app, metrics);
     }
     draw_footer(frame, footer, app, metrics);
@@ -244,24 +262,40 @@ fn slice_label(slice: Slice) -> &'static str {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let mut left = vec![Span::styled(" bandcamp ", theme().brand)];
-    let parts = match &app.source {
+/// Whether this frame shows the playing track in the header (and the filters in the list title).
+pub(super) fn track_in_header(app: &App, metrics: Metrics) -> bool {
+    metrics.bar == Bar::InHeader && app.screen == Screen::Browse && app.current_track().is_some()
+}
+
+/// What the list shows, `Discover`, and the filters or query that pick it.
+pub(super) fn source_parts(app: &App) -> (&'static str, Vec<String>) {
+    match &app.source {
         ListSource::Discover => {
-            left.push(Span::raw(" Discover"));
             let mut parts = crate::picker::describe(Filters::snapshot(), &app.query);
             parts.insert(1, slice_label(app.query.slice).to_owned());
-            parts
+            ("Discover", parts)
         }
-        ListSource::Search(query) => {
-            left.push(Span::raw(" Search"));
-            vec![format!("“{query}”")]
-        }
-        ListSource::Artist(name) => {
-            left.push(Span::raw(" Artist"));
-            vec![name.clone()]
-        }
-    };
+        ListSource::Search(query) => ("Search", vec![format!("“{query}”")]),
+        ListSource::Artist(name) => ("Artist", vec![name.clone()]),
+    }
+}
+
+fn draw_header(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
+    let mut left = vec![Span::styled(" bandcamp ", theme().brand)];
+    if track_in_header(app, metrics)
+        && let Some((track, clock)) = now_playing::header(app)
+    {
+        left.push(Span::raw(" "));
+        left.extend(track.spans);
+        let clock_width = u16::try_from(clock.width()).unwrap_or(u16::MAX);
+        let [l, r] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(clock_width)]).areas(area);
+        frame.render_widget(fit(Line::from(left), usize::from(l.width)), l);
+        frame.render_widget(clock, r);
+        return;
+    }
+    let (name, parts) = source_parts(app);
+    left.push(Span::raw(format!(" {name}")));
     for part in parts {
         left.push(Span::styled(" · ", Style::new().dim()));
         left.push(Span::styled(part, Style::new().bold()));
@@ -317,7 +351,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
         && app.picker.is_none()
         && !app.search_open
         && app.queue_view.is_none();
-    if metrics.compact_bar && app.screen == Screen::Browse && plain {
+    if metrics.bar != Bar::Full && app.screen == Screen::Browse && plain {
         status = footer_status(app, usize::from(area.width));
         if status.width() + 12 > usize::from(area.width) {
             status = Line::default();
@@ -1103,6 +1137,29 @@ mod tests {
                 "{density:?} at {height}: {lines:#?}"
             );
         }
+    }
+
+    #[test]
+    fn tiny_terminals_show_the_track_in_the_header() {
+        let mut app = app_with_page();
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleListening);
+        let lines = text_of(&render(&mut app, 80, 15));
+        assert!(lines[0].contains("▶ Joyride — Ocean Company"), "{lines:#?}");
+        assert!(lines[0].trim_end().ends_with("1:12 / 3:51"), "{lines:#?}");
+        assert!(
+            lines[1].contains("1/1,947,113 · electronic · best-selling"),
+            "{lines:#?}"
+        );
+        assert!(!lines.iter().any(|l| l.contains('━')), "no player bar");
+        // One row taller: the compact bar is back, and the header shows the filters.
+        let lines = text_of(&render(&mut app, 80, 16));
+        assert!(lines[0].contains("Discover · electronic"), "{lines:#?}");
+        assert!(lines[14].contains("1:12 ━"), "{lines:#?}");
+        // Nothing playing: the usual header.
+        let mut idle = app_with_page();
+        let lines = text_of(&render(&mut idle, 80, 15));
+        assert!(lines[0].contains("Discover · electronic"), "{lines:#?}");
     }
 
     #[test]

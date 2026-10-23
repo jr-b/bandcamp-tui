@@ -9,15 +9,15 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders};
 use unicode_width::UnicodeWidthStr;
 
-use super::Metrics;
 use super::theme::theme;
+use super::{Bar, Metrics};
 use crate::app::App;
 use crate::format;
 use crate::player::{PlaybackState, Status};
 
 pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
     const TITLE: &str = " Now playing ";
-    if metrics.compact_bar {
+    if metrics.bar == Bar::Compact {
         draw_compact(frame, area, app);
         return;
     }
@@ -137,6 +137,33 @@ fn draw_compact(frame: &mut Frame, area: Rect, app: &App) {
         progress_line(status, track.duration, usize::from(progress.width)),
         progress,
     );
+}
+
+/// For the header when there's no player bar: `▶ Joyride — Ocean Company` and ` 1:12 / 3:51 `.
+pub(super) fn header(app: &App) -> Option<(Line<'static>, Line<'static>)> {
+    let (album, index) = app.current_track()?;
+    let track = &album.tracks[index];
+    let status = &app.player;
+    let (icon, state) = state_label(status.state);
+    let title = Line::from(vec![
+        Span::styled(format!("{icon} "), theme().accent.bold()),
+        Span::styled(track.title.clone(), Style::new().bold()),
+        Span::styled(state, theme().warning),
+        Span::styled(" — ", Style::new().dim()),
+        Span::raw(track.artist.clone()),
+    ]);
+    let duration = if status.duration.is_zero() {
+        track.duration
+    } else {
+        status.duration
+    };
+    let clock = Line::from(format!(
+        " {} / {} ",
+        format::clock(status.position),
+        format::clock(duration)
+    ))
+    .dim();
+    Some((title, clock))
 }
 
 /// The playback state's icon and, unless it's simply playing or stopped, a note like
