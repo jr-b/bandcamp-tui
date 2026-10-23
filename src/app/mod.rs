@@ -613,7 +613,7 @@ impl App {
             }
             Action::ToggleCover => {
                 self.cover_hidden = !self.cover_hidden;
-                vec![]
+                vec![self.save_settings()]
             }
             Action::ToggleListening => {
                 self.screen = match self.screen {
@@ -769,6 +769,7 @@ impl App {
         let mut settings = Settings::from_state(&self.query, self.player.volume);
         settings.queue = self.queue.to_saved();
         settings.screen = self.screen;
+        settings.cover_hidden = self.cover_hidden;
         settings
     }
 

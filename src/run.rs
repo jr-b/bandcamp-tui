@@ -71,6 +71,8 @@ pub struct Services {
     pub density: crate::config::Density,
     /// Browsing or the listening view, as last time.
     pub screen: crate::app::Screen,
+    /// The cover hidden with `C`, as last time.
+    pub cover_hidden: bool,
     /// The saved play queue (restored without starting playback).
     pub queue: Vec<crate::queue::QueueEntry>,
 }
@@ -115,6 +117,7 @@ pub async fn run(
         listen_on_queue,
         density,
         screen,
+        cover_hidden,
         queue,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
@@ -128,6 +131,7 @@ pub async fn run(
     app.listen_on_queue = listen_on_queue;
     app.density = density;
     app.screen = screen;
+    app.cover_hidden = cover_hidden;
     app.queue = crate::queue::Queue::from_saved(queue);
     if let Some(note) = art_note {
         app.update(Action::Notice(note.to_owned()));

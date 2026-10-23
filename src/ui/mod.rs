@@ -602,7 +602,11 @@ mod tests {
         show_album(&mut app, fixture_album("album"));
         render(&mut app, 120, 24);
         assert!(app.album_pane.art_box.is_some());
-        app.update(Action::ToggleCover);
+        let effects = app.update(Action::ToggleCover);
+        assert!(
+            matches!(&effects[..], [Effect::SaveSettings(s)] if s.cover_hidden),
+            "remembered: {effects:?}"
+        );
         render(&mut app, 120, 24);
         assert!(app.album_pane.art_box.is_none(), "hidden");
         app.update(Action::ToggleCover);

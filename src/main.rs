@@ -168,6 +168,7 @@ fn main() -> Result<()> {
         listen_on_queue: config.listen_on_queue,
         density: config.density,
         screen: settings.screen,
+        cover_hidden: settings.cover_hidden,
         queue: settings.queue.clone(),
     };
     let result = runtime.block_on(run(&mut terminal, services, query));
