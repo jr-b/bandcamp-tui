@@ -60,6 +60,7 @@ NO_COLOR=1 bandcamp-tui                      # no colours
 | `a` | toggle autoplay |
 | `v` | listening view: large cover, playback only |
 | `i` | album about / credits / artist bio |
+| `P` | under 100 columns: show the album under the list |
 | `C` | hide / show the cover |
 | `D` | density: auto / compact / comfortable |
 | `o` | open on bandcamp.com |

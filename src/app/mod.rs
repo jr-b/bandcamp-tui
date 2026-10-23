@@ -75,6 +75,8 @@ pub enum Action {
     ToggleCover,
     /// Switch to the next layout density (`D`).
     CycleDensity,
+    /// With one pane showing, show the album under the list too (`P`).
+    TogglePeek,
     /// Switch between browsing and the listening view (`v`).
     ToggleListening,
     /// Continue with the next Discover release when an album ends.
@@ -424,6 +426,8 @@ pub struct App {
     albums: Lru<ItemId, Arc<Album>>,
     /// Whether the terminal shows cover art (decided once at startup).
     pub art_enabled: bool,
+    /// The album shows under the list in the single-pane layout (`P`).
+    pub peek: bool,
     /// The user hid the album pane's cover (`C`) to give the text and tracklist the room.
     pub cover_hidden: bool,
     /// The terminal's cell size in pixels, for sizing covers (set with `art_enabled`).
@@ -499,6 +503,7 @@ impl App {
             albums: Lru::new(ALBUM_CACHE_SIZE),
             art_enabled: false,
             cover_hidden: false,
+            peek: false,
             art_font: ratatui_image::FontSize::new(10, 20),
             art_sources: Lru::new(ART_SOURCE_CACHE_SIZE),
             arts: Lru::new(ART_CACHE_SIZE),
@@ -625,16 +630,10 @@ impl App {
                 self.view_update(&action);
                 vec![]
             }
-            Action::CycleDensity => {
-                self.density = self.density.next();
-                self.density_chosen = true;
-                self.info(format!("Density: {}", self.density.name()));
-                vec![self.save_settings()]
-            }
-            Action::ToggleCover => {
-                self.cover_hidden = !self.cover_hidden;
-                vec![self.save_settings()]
-            }
+            Action::TogglePeek => self.toggle_peek(),
+            Action::BackToDiscover if self.peek => self.toggle_peek(),
+            Action::CycleDensity => self.cycle_density(),
+            Action::ToggleCover => self.toggle_cover(),
             Action::ToggleListening => {
                 self.screen = match self.screen {
                     Screen::Browse => Screen::Listening,
@@ -713,6 +712,31 @@ impl App {
             }
         }
         if down { Action::Down } else { Action::Up }
+    }
+
+    /// `P` (or `esc` while peeking): the album under the list, when only one pane fits.
+    fn toggle_peek(&mut self) -> Vec<Effect> {
+        let both = self.pane_areas.list.width > 0 && self.pane_areas.album.width > 0;
+        if both && !self.peek {
+            self.info("Both panes are already showing.");
+        } else {
+            self.peek = !self.peek;
+        }
+        vec![]
+    }
+
+    /// `D`: the next layout density, remembered from now on.
+    fn cycle_density(&mut self) -> Vec<Effect> {
+        self.density = self.density.next();
+        self.density_chosen = true;
+        self.info(format!("Density: {}", self.density.name()));
+        vec![self.save_settings()]
+    }
+
+    /// `C`: hide or show the album pane's cover, remembered.
+    fn toggle_cover(&mut self) -> Vec<Effect> {
+        self.cover_hidden = !self.cover_hidden;
+        vec![self.save_settings()]
     }
 
     /// Focuses the pane at `at` and selects the release or track there. Popups swallow clicks

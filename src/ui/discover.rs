@@ -60,14 +60,23 @@ fn list_block(
     }
 }
 
-/// `divider`: another pane sits to the right.
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metrics, divider: bool) {
+/// Where the album pane is, relative to the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Album {
+    /// Not on screen: the list says what's selected on its last row.
+    Hidden,
+    Right,
+    Below,
+}
+
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metrics, album: Album) {
     let focused = app.focus == Focus::Discover;
-    let block = list_block(app, area.width, focused, metrics, divider);
+    let block = list_block(app, area.width, focused, metrics, album == Album::Right);
     app.pane_areas.list = area;
     let inner = block.inner(area);
     // Alone on screen, the list has no album pane beside it: one row says what's selected.
-    let strip = !divider && !app.discover.items.is_empty() && inner.height > STRIP_MIN_HEIGHT;
+    let strip =
+        album == Album::Hidden && !app.discover.items.is_empty() && inner.height > STRIP_MIN_HEIGHT;
     let [inner, strip_area] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(u16::from(strip))]).areas(inner);
     let header_rows = u16::from(metrics.list_header);

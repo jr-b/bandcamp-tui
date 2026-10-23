@@ -82,6 +82,9 @@ impl Metrics {
     }
 }
 
+/// Peeking (`P`) splits the body between the list and the album only when it has this many rows.
+const PEEK_MIN_HEIGHT: u16 = 14;
+
 /// Below this size the UI doesn't fit; a message says so instead.
 pub const MIN_WIDTH: u16 = 50;
 pub const MIN_HEIGHT: u16 = 12;
@@ -118,11 +121,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         let [list, album] =
             Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .areas(body);
-        discover::draw(frame, list, app, metrics, true);
+        discover::draw(frame, list, app, metrics, discover::Album::Right);
         album::draw(frame, album, app, metrics, false);
     } else {
         match app.focus {
-            Focus::Discover => discover::draw(frame, body, app, metrics, false),
+            Focus::Discover if app.peek && body.height >= PEEK_MIN_HEIGHT => {
+                let [list, album] =
+                    Layout::vertical([Constraint::Percentage(45), Constraint::Percentage(55)])
+                        .areas(body);
+                discover::draw(frame, list, app, metrics, discover::Album::Below);
+                album::draw(frame, album, app, metrics, true);
+            }
+            Focus::Discover => discover::draw(frame, body, app, metrics, discover::Album::Hidden),
             Focus::Album => album::draw(frame, body, app, metrics, true),
         }
     }
@@ -1006,6 +1016,35 @@ mod tests {
         app.update(Action::OpenSearch);
         app.update(click(list.x + 5, list.y));
         assert_eq!(app.table.selected(), Some(2));
+    }
+
+    #[test]
+    fn peek_shows_the_album_under_the_list() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 80, 24);
+        app.update(Action::TogglePeek);
+        let terminal = render(&mut app, 80, 24);
+        let (list, album) = (app.pane_areas.list, app.pane_areas.album);
+        assert!(
+            list.height > 0 && album.y >= list.bottom(),
+            "{list:?} {album:?}"
+        );
+        assert_eq!(app.focus, Focus::Discover, "the list keeps the keys");
+        insta::assert_snapshot!("peek_80x24", terminal.backend());
+
+        // Esc closes it (and only it); with both panes on screen there's nothing to peek at.
+        app.update(Action::BackToDiscover);
+        assert!(!app.peek);
+        render(&mut app, 80, 24);
+        assert_eq!(app.pane_areas.album, Rect::default());
+        render(&mut app, 120, 24);
+        app.update(Action::TogglePeek);
+        assert!(!app.peek);
+        assert_eq!(
+            app.message.as_ref().unwrap().text,
+            "Both panes are already showing."
+        );
     }
 
     #[test]
