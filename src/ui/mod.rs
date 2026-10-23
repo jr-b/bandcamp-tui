@@ -1106,6 +1106,26 @@ mod tests {
     }
 
     #[test]
+    fn d_cycles_the_density_and_remembers_it() {
+        let mut app = app_with_page();
+        assert_eq!(app.settings().density, None, "config's choice isn't saved");
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            let effects = app.update(Action::CycleDensity);
+            let [Effect::SaveSettings(s)] = &effects[..] else {
+                panic!("{effects:?}");
+            };
+            assert_eq!(s.density, Some(app.density));
+            seen.push(app.density);
+        }
+        assert_eq!(
+            seen,
+            [Density::Compact, Density::Comfortable, Density::Auto]
+        );
+        assert_eq!(app.message.as_ref().unwrap().text, "Density: auto");
+    }
+
+    #[test]
     fn compact_bar_moves_autoplay_and_up_next_to_the_footer() {
         let mut app = app_with_page();
         listening_to_joyride(&mut app, PlaybackState::Playing);

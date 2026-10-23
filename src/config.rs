@@ -14,7 +14,7 @@
 //! theme = "auto"
 //! # How much room the layout keeps for itself: "auto" (a one-line player bar on short
 //! # terminals), "compact" (also drops the pane borders), or "comfortable" (never compacts).
-//! density = "auto"
+//! density = "auto"            # `D` switches it; the last choice is remembered
 //!
 //! # Optional: replace the colour of a role. Names follow the terminal's own palette:
 //! # "black" "red" "green" "yellow" "blue" "magenta" "cyan" "white", each also with a
@@ -32,7 +32,7 @@ use std::fmt;
 use std::path::Path;
 
 use ratatui::style::Color;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -58,7 +58,7 @@ pub enum ThemeChoice {
     Mono,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Density {
     /// Compact the chrome (one-line player bar) when the terminal is short.
@@ -68,6 +68,27 @@ pub enum Density {
     Compact,
     /// Never compact.
     Comfortable,
+}
+
+impl Density {
+    /// The next one `D` switches to.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        match self {
+            Self::Auto => Self::Compact,
+            Self::Compact => Self::Comfortable,
+            Self::Comfortable => Self::Auto,
+        }
+    }
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Compact => "compact",
+            Self::Comfortable => "comfortable",
+        }
+    }
 }
 
 /// Per-role colours that replace the theme's. See [`crate::ui::theme::Theme`] for the roles.

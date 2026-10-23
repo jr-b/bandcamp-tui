@@ -61,6 +61,7 @@ NO_COLOR=1 bandcamp-tui                      # no colours
 | `v` | listening view: large cover, playback only |
 | `i` | album about / credits / artist bio |
 | `C` | hide / show the cover |
+| `D` | density: auto / compact / comfortable |
 | `o` | open on bandcamp.com |
 | `/` | search (`esc` back to Discover) |
 | `f` / `t` / `L` | genre or tag / release time / location |
@@ -90,7 +91,7 @@ density = "auto"          # "auto", "compact" or "comfortable"
 
 ### Density
 
-On a short terminal the chrome (borders, player bar, footer) takes a third of the screen. `auto` shrinks the player bar to one line under 30 rows. `compact` does that always, and also drops the pane borders and the list's column header. Below 100 columns only one pane shows at a time (`tab` switches); the list then describes the selected release on its last row. `comfortable` never compacts.
+On a short terminal the chrome (borders, player bar, footer) takes a third of the screen. `auto` shrinks the player bar to one line under 30 rows. `compact` does that always, and also drops the pane borders and the list's column header. Below 100 columns only one pane shows at a time (`tab` switches); the list then describes the selected release on its last row. `comfortable` never compacts. `D` switches between them; the choice is remembered and wins over `config.toml` from then on.
 
 ### Colours
 

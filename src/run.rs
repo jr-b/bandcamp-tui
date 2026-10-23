@@ -69,6 +69,8 @@ pub struct Services {
     pub listen_on_queue: bool,
     /// How tightly to pack the layout (from `config.toml`).
     pub density: crate::config::Density,
+    /// The density last chosen with `D` (from `state.toml`); wins over `density`.
+    pub chosen_density: Option<crate::config::Density>,
     /// Browsing or the listening view, as last time.
     pub screen: crate::app::Screen,
     /// The cover hidden with `C`, as last time.
@@ -116,6 +118,7 @@ pub async fn run(
         autoplay,
         listen_on_queue,
         density,
+        chosen_density,
         screen,
         cover_hidden,
         queue,
@@ -129,7 +132,8 @@ pub async fn run(
     }
     app.autoplay = autoplay;
     app.listen_on_queue = listen_on_queue;
-    app.density = density;
+    app.density = chosen_density.unwrap_or(density);
+    app.density_chosen = chosen_density.is_some();
     app.screen = screen;
     app.cover_hidden = cover_hidden;
     app.queue = crate::queue::Queue::from_saved(queue);

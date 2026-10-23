@@ -167,6 +167,7 @@ fn main() -> Result<()> {
         autoplay: config.autoplay,
         listen_on_queue: config.listen_on_queue,
         density: config.density,
+        chosen_density: settings.density,
         screen: settings.screen,
         cover_hidden: settings.cover_hidden,
         queue: settings.queue.clone(),

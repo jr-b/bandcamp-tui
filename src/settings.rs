@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::Screen;
 use crate::bandcamp::{DiscoverQuery, Slice};
+use crate::config::Density;
 use crate::queue::QueueEntry;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,6 +27,9 @@ pub struct Settings {
     pub screen: Screen,
     /// The album pane's cover was hidden with `C`.
     pub cover_hidden: bool,
+    /// Chosen with `D`; wins over `config.toml`'s `density`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub density: Option<Density>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -46,6 +50,7 @@ impl Default for Settings {
             queue: Vec::new(),
             screen: Screen::Browse,
             cover_hidden: false,
+            density: None,
         }
     }
 }
@@ -113,6 +118,7 @@ impl Settings {
             queue: Vec::new(),
             screen: Screen::Browse,
             cover_hidden: false,
+            density: None,
         }
     }
 }
@@ -172,12 +178,14 @@ mod tests {
         settings.queue = vec![entry, single];
         settings.screen = Screen::Listening;
         settings.cover_hidden = true;
+        settings.density = Some(Density::Compact);
         settings.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[[queue]]"), "{text}");
         assert!(text.contains("kind = \"album\""), "{text}");
         assert!(text.contains("screen = \"listening\""), "{text}");
         assert!(text.contains("cover_hidden = true"), "{text}");
+        assert!(text.contains("density = \"compact\""), "{text}");
         assert_eq!(Settings::load(&path), settings);
     }
 

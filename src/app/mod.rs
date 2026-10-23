@@ -73,6 +73,8 @@ pub enum Action {
     ToggleInfo,
     /// Hide or show the cover in the album pane (`C`).
     ToggleCover,
+    /// Switch to the next layout density (`D`).
+    CycleDensity,
     /// Switch between browsing and the listening view (`v`).
     ToggleListening,
     /// Continue with the next Discover release when an album ends.
@@ -400,8 +402,10 @@ pub struct App {
     pub screen: Screen,
     /// Switch to the listening view whenever the queue starts a release (`config.toml`).
     pub listen_on_queue: bool,
-    /// How tightly the layout is packed (`config.toml`).
+    /// How tightly the layout is packed (`config.toml`, or `D`).
     pub density: crate::config::Density,
+    /// Set once `D` chose the density (this run or an earlier one): then it's remembered.
+    pub density_chosen: bool,
     pub album_pane: AlbumPane,
     /// Set while rendering.
     pub pane_areas: PaneAreas,
@@ -478,6 +482,7 @@ impl App {
             screen: Screen::Browse,
             listen_on_queue: false,
             density: crate::config::Density::default(),
+            density_chosen: false,
             album_pane: AlbumPane::default(),
             pane_areas: PaneAreas::default(),
             listening: ListeningPane::default(),
@@ -610,6 +615,12 @@ impl App {
             | Action::ToggleInfo => {
                 self.view_update(&action);
                 vec![]
+            }
+            Action::CycleDensity => {
+                self.density = self.density.next();
+                self.density_chosen = true;
+                self.info(format!("Density: {}", self.density.name()));
+                vec![self.save_settings()]
             }
             Action::ToggleCover => {
                 self.cover_hidden = !self.cover_hidden;
@@ -770,6 +781,7 @@ impl App {
         settings.queue = self.queue.to_saved();
         settings.screen = self.screen;
         settings.cover_hidden = self.cover_hidden;
+        settings.density = self.density_chosen.then_some(self.density);
         settings
     }
 
