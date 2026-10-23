@@ -72,6 +72,11 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metric
         Layout::vertical([Constraint::Min(0), Constraint::Length(u16::from(strip))]).areas(inner);
     let header_rows = u16::from(metrics.list_header);
     app.page_rows = usize::from(inner.height.saturating_sub(header_rows));
+    app.pane_areas.list_rows = Rect {
+        y: inner.y + header_rows,
+        height: inner.height.saturating_sub(header_rows),
+        ..inner
+    };
 
     if app.discover.items.is_empty() {
         frame.render_widget(block, area);

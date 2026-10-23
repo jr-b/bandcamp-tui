@@ -976,6 +976,39 @@ mod tests {
     }
 
     #[test]
+    fn a_click_focuses_the_pane_and_selects_the_row() {
+        let click = |column, row| Action::Click { column, row };
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 120, 24);
+        let (list, tracks) = (app.pane_areas.list_rows, app.pane_areas.track_rows);
+
+        app.update(click(tracks.x + 5, tracks.y + 3));
+        assert_eq!(app.focus, Focus::Album);
+        assert_eq!(app.album_pane.tracks.selected(), Some(3));
+
+        app.update(click(list.x + 5, list.y + 2));
+        assert_eq!(app.focus, Focus::Discover);
+        assert_eq!(app.table.selected(), Some(2));
+        let text = text_of(&render(&mut app, 120, 24)).join("\n");
+        assert!(text.contains("Invisible Places"), "{text}");
+
+        // Below the last release: focus only.
+        app.update(Action::FocusAlbum);
+        app.update(click(list.x + 5, list.bottom() - 1));
+        assert_eq!(app.focus, Focus::Discover);
+        assert_eq!(app.table.selected(), Some(2));
+        // The column header isn't a row.
+        app.update(click(list.x + 5, list.y - 1));
+        assert_eq!(app.table.selected(), Some(2));
+
+        // Popups swallow clicks.
+        app.update(Action::OpenSearch);
+        app.update(click(list.x + 5, list.y));
+        assert_eq!(app.table.selected(), Some(2));
+    }
+
+    #[test]
     fn two_panes_at_100x24() {
         let mut app = app_with_page();
         show_album(&mut app, fixture_album("album"));

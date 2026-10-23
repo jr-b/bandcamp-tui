@@ -12,7 +12,7 @@ A terminal player for [Bandcamp Discover](https://bandcamp.com/discover/) that s
 - Album info, credits, artist bio and tracklist; play from any track
 - Queue releases or single tracks across albums
 - Autoplay: when the queue ends, the next Discover release starts
-- Vim and arrow keys, mouse wheel; filters, volume and queue persist between runs
+- Vim and arrow keys, mouse wheel and clicks; filters, volume and queue persist between runs
 - Cover art on terminals with kitty, iTerm2 or sixel graphics
 - Expired stream links (valid ~24 h) are refreshed automatically
 
@@ -70,7 +70,7 @@ NO_COLOR=1 bandcamp-tui                      # no colours
 | `?` | help |
 | `q`, `^c` | quit |
 
-The mouse wheel scrolls what's under the pointer; hold `Shift` (`Option` in iTerm2) to select text. The terminal needs at least 50×12; both panes show from 80 columns.
+The mouse wheel scrolls what's under the pointer, and a click focuses a pane and selects the row; hold `Shift` (`Option` in iTerm2) to select text. The terminal needs at least 50×12; both panes show from 100 columns.
 
 Filters, volume, queue and view are saved to `state.toml`, alongside the log file `bandcamp-tui.log` (override with `--log-file`; the previous run's is kept as `.log.1`):
 

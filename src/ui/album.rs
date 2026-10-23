@@ -312,6 +312,7 @@ fn draw_tracks(frame: &mut Frame, area: Rect, album: &Album, app: &mut App, focu
     let [rule, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(rest);
     frame.render_widget(Line::from("─".repeat(usize::from(rule.width))).dim(), rule);
     app.album_pane.page_rows = usize::from(list.height);
+    app.pane_areas.track_rows = list;
 
     let playing = app.playing_index_in(album);
     let widths = [

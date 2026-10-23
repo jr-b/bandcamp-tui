@@ -117,6 +117,11 @@ pub enum Action {
         column: u16,
         row: u16,
     },
+    /// Left click: focus the pane under the pointer and select the row clicked.
+    Click {
+        column: u16,
+        row: u16,
+    },
     ShowHelp,
     CloseHelp,
     TogglePause,
@@ -330,12 +335,16 @@ pub struct AlbumPane {
     pub art_box: Option<ArtBox>,
 }
 
-/// Where the browse panes were last drawn, so the mouse wheel can scroll the one it's over.
+/// Where the browse panes were last drawn, so the mouse can scroll or click the one it's over.
 /// A pane that isn't shown has an empty area.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PaneAreas {
     pub list: Rect,
     pub album: Rect,
+    /// The list's release rows (below its column header): row `y` is release `offset + y`.
+    pub list_rows: Rect,
+    /// The album pane's track rows, likewise.
+    pub track_rows: Rect,
 }
 
 /// State of the `?` help overlay.
@@ -664,6 +673,7 @@ impl App {
             }
             // Picker keys with no picker open (handled above when one is), and resizes, which
             // only need a redraw.
+            Action::Click { column, row } => self.click(Position::new(column, row)),
             // Wheel steps were turned into moves above.
             Action::Wheel { .. }
             | Action::ClosePopup
@@ -703,6 +713,39 @@ impl App {
             }
         }
         if down { Action::Down } else { Action::Up }
+    }
+
+    /// Focuses the pane at `at` and selects the release or track there. Popups swallow clicks
+    /// before this; the listening view ignores them.
+    fn click(&mut self, at: Position) -> Vec<Effect> {
+        if self.screen != Screen::Browse {
+            return vec![];
+        }
+        let areas = self.pane_areas;
+        let row_at = |rows: Rect, offset: usize| {
+            rows.contains(at)
+                .then(|| offset + usize::from(at.y - rows.y))
+        };
+        if areas.list.contains(at) {
+            self.focus = Focus::Discover;
+            if let Some(index) = row_at(areas.list_rows, self.table.offset())
+                && index < self.discover.items.len()
+            {
+                return self.move_by(delta(self.table.selected().unwrap_or(0), index));
+            }
+        } else if areas.album.contains(at) {
+            self.focus = Focus::Album;
+            let len = match self.album_view() {
+                AlbumView::Loaded(album) if !self.album_pane.show_info => album.tracks.len(),
+                _ => 0,
+            };
+            if let Some(index) = row_at(areas.track_rows, self.album_pane.tracks.offset())
+                && index < len
+            {
+                return self.move_by(delta(self.album_pane.tracks.selected().unwrap_or(0), index));
+            }
+        }
+        vec![]
     }
 
     /// The open popup handles `action` first; `None` means no popup took it.
@@ -970,4 +1013,13 @@ fn scrolled(scroll: u16, delta: isize) -> u16 {
 
 fn page(rows: usize) -> isize {
     isize::try_from(rows.saturating_sub(1).max(1)).unwrap_or(isize::MAX)
+}
+
+/// The move from row `from` to row `to`.
+fn delta(from: usize, to: usize) -> isize {
+    let (from, to) = (
+        isize::try_from(from).unwrap_or(isize::MAX),
+        isize::try_from(to).unwrap_or(isize::MAX),
+    );
+    to - from
 }
