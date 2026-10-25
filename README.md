@@ -12,7 +12,7 @@ A terminal player for [Bandcamp Discover](https://bandcamp.com/discover/) that s
 - Album info, credits, artist bio and tracklist; play from any track
 - Queue releases or single tracks across albums
 - Autoplay: when the queue ends, the next Discover release starts
-- Vim and arrow keys, mouse wheel; filters, volume and queue persist between runs
+- Vim and arrow keys, mouse wheel and clicks; filters, volume and queue persist between runs
 - Cover art on terminals with kitty, iTerm2 or sixel graphics
 - Expired stream links (valid ~24 h) are refreshed automatically
 
@@ -60,6 +60,9 @@ NO_COLOR=1 bandcamp-tui                      # no colours
 | `a` | toggle autoplay |
 | `v` | listening view: large cover, playback only |
 | `i` | album about / credits / artist bio |
+| `P` | under 100 columns: show the album under the list |
+| `C` | hide / show the cover |
+| `D` | density: auto / compact / comfortable |
 | `o` | open on bandcamp.com |
 | `/` | search (`esc` back to Discover) |
 | `f` / `t` / `L` | genre or tag / release time / location |
@@ -68,7 +71,7 @@ NO_COLOR=1 bandcamp-tui                      # no colours
 | `?` | help |
 | `q`, `^c` | quit |
 
-The mouse wheel scrolls what's under the pointer; hold `Shift` (`Option` in iTerm2) to select text. The terminal needs at least 50×12; both panes show from 80 columns.
+The mouse wheel scrolls what's under the pointer, and a click focuses a pane and selects the row; hold `Shift` (`Option` in iTerm2) to select text. The terminal needs at least 50×12; both panes show from 100 columns.
 
 Filters, volume, queue and view are saved to `state.toml`, alongside the log file `bandcamp-tui.log` (override with `--log-file`; the previous run's is kept as `.log.1`):
 
@@ -84,7 +87,12 @@ album_art = "auto"        # "auto", "on" or "off"
 autoplay = true           # start the next Discover release when the queue ends
 listen_on_queue = false   # open the listening view when the queue starts a release
 theme = "auto"            # "auto", "dark", "light" or "mono"
+density = "auto"          # "auto", "compact" or "comfortable"
 ```
+
+### Density
+
+On a short terminal the chrome (borders, player bar, footer) takes a third of the screen. `auto` shrinks the player bar to one line under 30 rows. `compact` does that always, and also drops the pane borders and the list's column header. Below 100 columns only one pane shows at a time (`tab` switches); the list then describes the selected release on its last row. `comfortable` never compacts. `D` switches between them; the choice is remembered and wins over `config.toml` from then on.
 
 ### Colours
 

@@ -10,12 +10,17 @@ use ratatui::widgets::{Block, Borders};
 use unicode_width::UnicodeWidthStr;
 
 use super::theme::theme;
+use super::{Bar, Metrics};
 use crate::app::App;
 use crate::format;
 use crate::player::{PlaybackState, Status};
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
     const TITLE: &str = " Now playing ";
+    if metrics.bar == Bar::Compact {
+        draw_compact(frame, area, app);
+        return;
+    }
     let mut right = Vec::new();
     if let Some((next, more)) = app.up_next() {
         let more = if more > 0 {
@@ -86,6 +91,79 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &App) {
         progress_line(status, track.duration, usize::from(progress.width)),
         progress,
     );
+}
+
+/// Columns the compact bar gives the clock, progress bar and volume.
+const COMPACT_PROGRESS_WIDTH: usize = 38;
+
+/// One line: the track on the left, ` 1:12 ━━●── 3:51   vol  80% ` on the right.
+fn draw_compact(frame: &mut Frame, area: Rect, app: &App) {
+    let status = &app.player;
+    let Some((album, index)) = app.current_track() else {
+        let hint = if app.player_available {
+            " Nothing playing. Select a release and press ⏎."
+        } else {
+            " No audio output."
+        };
+        frame.render_widget(Line::from(hint).dim(), area);
+        if app.player_available {
+            let volume = format!("vol {:>3}% ", volume_percent(status.volume));
+            frame.render_widget(Line::from(volume).right_aligned().dim(), area);
+        }
+        return;
+    };
+    let track = &album.tracks[index];
+    // The progress keeps its width unless the track would be left with less than 20 columns.
+    let progress_width = COMPACT_PROGRESS_WIDTH.min(usize::from(area.width).saturating_sub(20));
+    let [info, progress] = Layout::horizontal([
+        Constraint::Min(0),
+        Constraint::Length(u16::try_from(progress_width).unwrap_or(u16::MAX)),
+    ])
+    .areas(area);
+    let (icon, state) = state_label(status.state);
+    let line = Line::from(vec![
+        Span::styled(format!(" {icon} "), theme().accent.bold()),
+        Span::styled(track.title.clone(), Style::new().bold()),
+        Span::styled(state, theme().warning),
+        Span::raw(" — "),
+        Span::raw(track.artist.clone()),
+        Span::styled(
+            format!(" · {}/{}", index + 1, album.tracks.len()),
+            Style::new().dim(),
+        ),
+    ]);
+    frame.render_widget(super::fit(line, usize::from(info.width)), info);
+    frame.render_widget(
+        progress_line(status, track.duration, usize::from(progress.width)),
+        progress,
+    );
+}
+
+/// For the header when there's no player bar: `▶ Joyride — Ocean Company` and ` 1:12 / 3:51 `.
+pub(super) fn header(app: &App) -> Option<(Line<'static>, Line<'static>)> {
+    let (album, index) = app.current_track()?;
+    let track = &album.tracks[index];
+    let status = &app.player;
+    let (icon, state) = state_label(status.state);
+    let title = Line::from(vec![
+        Span::styled(format!("{icon} "), theme().accent.bold()),
+        Span::styled(track.title.clone(), Style::new().bold()),
+        Span::styled(state, theme().warning),
+        Span::styled(" — ", Style::new().dim()),
+        Span::raw(track.artist.clone()),
+    ]);
+    let duration = if status.duration.is_zero() {
+        track.duration
+    } else {
+        status.duration
+    };
+    let clock = Line::from(format!(
+        " {} / {} ",
+        format::clock(status.position),
+        format::clock(duration)
+    ))
+    .dim();
+    Some((title, clock))
 }
 
 /// The playback state's icon and, unless it's simply playing or stopped, a note like
