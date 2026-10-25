@@ -1,7 +1,7 @@
 //! Key bindings. Vim-style and arrow keys both work.
 
 use ratatui::crossterm::event::{
-    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
 use crate::app::Action;
@@ -30,6 +30,9 @@ pub const HINTS: &[(&str, &str)] = &[
     ("s", "sort"),
     ("r", "refresh"),
     ("c", "playing"),
+    ("P", "peek"),
+    ("C", "cover"),
+    ("D", "density"),
     ("↑↓", "move"),
 ];
 
@@ -79,9 +82,13 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("g G  Home End", "top / bottom"),
             ("PgUp PgDn  ^u ^d", "page"),
             ("tab  h l", "switch pane"),
+            ("P", "album under the list (one pane showing)"),
             ("c", "jump to what's playing"),
             ("wheel", "scroll what's under the pointer"),
+            ("click", "focus a pane, select a row"),
             ("i", "about / credits / artist bio"),
+            ("C", "hide / show the cover"),
+            ("D", "density: auto / compact / comfortable"),
             ("o", "open on bandcamp.com"),
         ],
     ),
@@ -135,12 +142,18 @@ pub enum Mode {
     Listening,
 }
 
-/// Maps a mouse event to an action: only the wheel is used.
+/// Maps a mouse event to an action: the wheel and left clicks are used.
 #[must_use]
 pub fn mouse_action(event: MouseEvent) -> Option<Action> {
     let down = match event.kind {
         MouseEventKind::ScrollDown => true,
         MouseEventKind::ScrollUp => false,
+        MouseEventKind::Down(MouseButton::Left) => {
+            return Some(Action::Click {
+                column: event.column,
+                row: event.row,
+            });
+        }
         _ => return None,
     };
     Some(Action::Wheel {
@@ -181,6 +194,9 @@ pub fn action_for(key: KeyEvent, mode: Mode) -> Option<Action> {
         KeyCode::Char('h') => Action::FocusDiscover,
         KeyCode::Char('l') => Action::FocusAlbum,
         KeyCode::Char('i') => Action::ToggleInfo,
+        KeyCode::Char('C') => Action::ToggleCover,
+        KeyCode::Char('D') => Action::CycleDensity,
+        KeyCode::Char('P') => Action::TogglePeek,
         KeyCode::Char(' ') => Action::TogglePause,
         KeyCode::Char('n') => Action::NextTrack,
         KeyCode::Char('p') => Action::PreviousTrack,
@@ -373,8 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_wheel_is_used() {
-        use ratatui::crossterm::event::MouseButton;
+    fn the_wheel_and_left_clicks_are_used() {
         let mouse = |kind| MouseEvent {
             kind,
             column: 3,
@@ -395,6 +410,10 @@ mod tests {
         ));
         assert_eq!(
             mouse_action(mouse(MouseEventKind::Down(MouseButton::Left))),
+            Some(Action::Click { column: 3, row: 4 })
+        );
+        assert_eq!(
+            mouse_action(mouse(MouseEventKind::Down(MouseButton::Right))),
             None
         );
         assert_eq!(mouse_action(mouse(MouseEventKind::Moved)), None);

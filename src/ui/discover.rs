@@ -4,13 +4,15 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Cell, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, Cell, Paragraph, Row, Table, TableState, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use super::pane;
 use super::theme::{self, theme};
-use crate::app::{App, Focus, ListSource};
+use super::{Metrics, pane};
+use crate::app::{AlbumView, App, Focus, ListSource};
 use crate::format;
+
+const LOADING: &str = " loading… ";
 
 /// Below this inner width the track count column is left out, so titles keep their room.
 const TRACKS_COLUMN_MIN_WIDTH: u16 = 50;
@@ -30,20 +32,60 @@ fn widths(show_tracks: bool) -> Vec<Constraint> {
     widths
 }
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
-    let focused = app.focus == Focus::Discover;
-    let mut block = pane(&title(app), focused);
+/// The pane around the list. Its title is cut with an ellipsis rather than let it run into the
+/// loading note on the right.
+fn list_block(
+    app: &App,
+    width: u16,
+    focused: bool,
+    metrics: Metrics,
+    divider: bool,
+) -> Block<'static> {
+    let note = if app.discover.loading {
+        LOADING.width() + 1
+    } else {
+        0
+    };
+    let room = usize::from(width).saturating_sub(4 + note);
+    let title = format::truncate(&title(app, metrics), room).into_owned();
+    let block = pane(&title, focused, metrics, divider);
     if app.discover.loading {
-        block = block.title(
-            Line::from(" loading… ")
+        block.title(
+            Line::from(LOADING)
                 .right_aligned()
                 .patch_style(theme().accent),
-        );
+        )
+    } else {
+        block
     }
+}
+
+/// Where the album pane is, relative to the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Album {
+    /// Not on screen: the list says what's selected on its last row.
+    Hidden,
+    Right,
+    Below,
+}
+
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metrics, album: Album) {
+    let focused = app.focus == Focus::Discover;
+    let block = list_block(app, area.width, focused, metrics, album == Album::Right);
     app.pane_areas.list = area;
     let inner = block.inner(area);
-    // One row is the column header.
-    app.page_rows = usize::from(inner.height.saturating_sub(1));
+    // Alone on screen, the list has no album pane beside it: one row says what's selected.
+    let strip =
+        album == Album::Hidden && !app.discover.items.is_empty() && inner.height > STRIP_MIN_HEIGHT;
+    let [inner, strip_area] =
+        Layout::vertical([Constraint::Min(0), Constraint::Length(u16::from(strip))]).areas(inner);
+    let header_rows = u16::from(metrics.list_header);
+    app.page_rows = usize::from(inner.height.saturating_sub(header_rows));
+    app.pane_areas.list_rows = Rect {
+        y: inner.y + header_rows,
+        height: inner.height.saturating_sub(header_rows),
+        ..inner
+    };
 
     if app.discover.items.is_empty() {
         frame.render_widget(block, area);
@@ -123,11 +165,52 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     } else {
         theme::SELECTED_UNFOCUSED
     };
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(block)
-        .row_highlight_style(highlight);
-    frame.render_stateful_widget(table, area, &mut state);
+    let mut table = Table::new(rows, widths).row_highlight_style(highlight);
+    if metrics.list_header {
+        table = table.header(header);
+    }
+    frame.render_widget(block, area);
+    frame.render_stateful_widget(table, inner, &mut state);
+    if strip {
+        frame.render_widget(
+            selection_strip(app, usize::from(strip_area.width)),
+            strip_area,
+        );
+    }
+}
+
+/// The list needs at least this many inner rows to give one up to the selection strip.
+const STRIP_MIN_HEIGHT: u16 = 8;
+
+/// `10 tracks · 38 min · released 16 Oct 2026 · Wuppertal, Germany · #electronic #chill`: what the
+/// album pane would say about the selected release, in one dim line.
+fn selection_strip(app: &App, width: usize) -> Line<'static> {
+    let Some(item) = app.selected() else {
+        return Line::default();
+    };
+    let (tracks, duration) = app.release_size(item);
+    let mut facts = Vec::new();
+    if let Some(n) = tracks {
+        facts.push(format!("{n} track{}", if n == 1 { "" } else { "s" }));
+    }
+    if let Some(d) = duration {
+        facts.push(format::length(d));
+    }
+    if let Some(date) = item.release_date {
+        let verb = if item.is_preorder { "out" } else { "released" };
+        facts.push(format!("{verb} {date}"));
+    }
+    if let Some(location) = &item.band_location {
+        facts.push(location.clone());
+    }
+    let mut line = facts.join(" · ");
+    if let AlbumView::Loaded(album) = app.album_view() {
+        for tag in album.tags.iter().take(3) {
+            line.push_str(" #");
+            line.push_str(&tag.norm_name);
+        }
+    }
+    super::fit(Line::from(format!(" {line}")).dim(), width)
 }
 
 /// The rows to draw, and a table state for just those rows. Scrolls the way ratatui would:
@@ -149,26 +232,36 @@ fn visible_window(app: &mut App) -> (std::ops::Range<usize>, TableState) {
     (offset..(offset + rows).min(len), state)
 }
 
-/// What the list shows, and where the selection is in it: `Discover · 12/1,947,113`.
-fn title(app: &App) -> String {
+/// What the list shows, and where the selection is in it: `Discover · 12/1,947,113`. When the
+/// header shows the playing track instead, the filters come here: `electronic · new · 12/340`.
+/// The position goes first there, so a narrow pane cuts the filters rather than the position.
+fn title(app: &App, metrics: Metrics) -> String {
+    let position = app
+        .table
+        .selected()
+        .filter(|_| !app.discover.items.is_empty())
+        .map(|selected| {
+            let total = app.discover.total.max(app.discover.items.len() as u64);
+            format!(
+                "{}/{}",
+                format::thousands(selected as u64 + 1),
+                format::thousands(total)
+            )
+        });
+    if super::track_in_header(app, metrics) {
+        let filters = super::source_parts(app).1.join(" · ");
+        return match position {
+            Some(position) => format!("{position} · {filters}"),
+            None => filters,
+        };
+    }
     let name = match &app.source {
         ListSource::Discover => "Discover",
         ListSource::Search(_) => "Search results",
         ListSource::Artist(name) => name,
     };
-    match app
-        .table
-        .selected()
-        .filter(|_| !app.discover.items.is_empty())
-    {
-        Some(selected) => {
-            let total = app.discover.total.max(app.discover.items.len() as u64);
-            format!(
-                "{name} · {}/{}",
-                format::thousands(selected as u64 + 1),
-                format::thousands(total)
-            )
-        }
+    match position {
+        Some(position) => format!("{name} · {position}"),
         None => name.to_owned(),
     }
 }

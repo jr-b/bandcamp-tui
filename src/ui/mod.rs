@@ -14,19 +14,76 @@ pub mod theme;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Style, Stylize};
+use ratatui::symbols::border;
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Focus, ListSource, MessageKind, Screen};
 use crate::bandcamp::{Filters, Slice};
+use crate::config::Density;
 use crate::format;
 use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
 use crate::text_input::TextInput;
 use theme::theme;
 
-/// Below this width only the focused pane is shown.
-const TWO_PANE_MIN_WIDTH: u16 = 80;
+/// Below this width only the focused pane is shown. A cover and the text beside it need about
+/// 40 columns, which with the list's 55% means 100.
+const TWO_PANE_MIN_WIDTH: u16 = 100;
+
+/// Terminals shorter than this get the compact chrome under `density = "auto"`.
+const SHORT_HEIGHT: u16 = 30;
+/// Terminals shorter than this show the playing track in the header instead of a player bar.
+const TINY_HEIGHT: u16 = 16;
+
+/// Where the browse screen shows what's playing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Bar {
+    /// Three rows: a title rule with autoplay and up-next, the track, the progress.
+    Full,
+    /// One row: the track and progress; autoplay and up-next move to the footer.
+    Compact,
+    /// No bar: the header shows the playing track, the list title the filters.
+    InHeader,
+}
+
+/// How the chrome is packed for this frame, from the `density` setting and the terminal size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Metrics {
+    pub bar: Bar,
+    /// Panes are a title rule instead of a box.
+    pub borderless: bool,
+    /// The list's underlined "Title Artist Len" row.
+    pub list_header: bool,
+}
+
+impl Metrics {
+    fn resolve(density: Density, height: u16) -> Self {
+        let bar = match density {
+            Density::Comfortable => Bar::Full,
+            _ if height < TINY_HEIGHT => Bar::InHeader,
+            Density::Auto if height >= SHORT_HEIGHT => Bar::Full,
+            _ => Bar::Compact,
+        };
+        Self {
+            bar,
+            borderless: density == Density::Compact,
+            list_header: density != Density::Compact,
+        }
+    }
+
+    /// Rows the player bar takes in the browse screen.
+    fn bar_rows(self) -> u16 {
+        match self.bar {
+            Bar::Full => 3,
+            Bar::Compact => 1,
+            Bar::InHeader => 0,
+        }
+    }
+}
+
+/// Peeking (`P`) splits the body between the list and the album only when it has this many rows.
+const PEEK_MIN_HEIGHT: u16 = 14;
 
 /// Below this size the UI doesn't fit; a message says so instead.
 pub const MIN_WIDTH: u16 = 50;
@@ -42,10 +99,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         return;
     }
     // The listening view shows the track and progress itself: no now-playing bar.
+    let metrics = Metrics::resolve(app.density, area.height);
     let bar_rows = if app.screen == Screen::Listening {
         0
     } else {
-        3
+        metrics.bar_rows()
     };
     let [header, body, now_playing, footer] = Layout::vertical([
         Constraint::Length(1),
@@ -56,25 +114,32 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     .areas(frame.area());
 
     app.pane_areas = crate::app::PaneAreas::default();
-    draw_header(frame, header, app);
+    draw_header(frame, header, app, metrics);
     if app.screen == Screen::Listening {
-        listening::draw(frame, body, app);
+        listening::draw(frame, body, app, metrics);
     } else if body.width >= TWO_PANE_MIN_WIDTH {
         let [list, album] =
             Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
                 .areas(body);
-        discover::draw(frame, list, app);
-        album::draw(frame, album, app, false);
+        discover::draw(frame, list, app, metrics, discover::Album::Right);
+        album::draw(frame, album, app, metrics, false);
     } else {
         match app.focus {
-            Focus::Discover => discover::draw(frame, body, app),
-            Focus::Album => album::draw(frame, body, app, true),
+            Focus::Discover if app.peek && body.height >= PEEK_MIN_HEIGHT => {
+                let [list, album] =
+                    Layout::vertical([Constraint::Percentage(45), Constraint::Percentage(55)])
+                        .areas(body);
+                discover::draw(frame, list, app, metrics, discover::Album::Below);
+                album::draw(frame, album, app, metrics, true);
+            }
+            Focus::Discover => discover::draw(frame, body, app, metrics, discover::Album::Hidden),
+            Focus::Album => album::draw(frame, body, app, metrics, true),
         }
     }
-    if app.screen == Screen::Browse {
-        now_playing::draw(frame, now_playing, app);
+    if app.screen == Screen::Browse && bar_rows > 0 {
+        now_playing::draw(frame, now_playing, app, metrics);
     }
-    draw_footer(frame, footer, app);
+    draw_footer(frame, footer, app, metrics);
     if let Some(picker) = app.picker.as_mut() {
         picker::draw(frame, body, picker);
     }
@@ -129,9 +194,31 @@ fn draw_input(frame: &mut Frame, area: Rect, input: &TextInput, placeholder: &st
     }
 }
 
-/// A bordered pane, highlighted when focused.
-fn pane(title: &str, focused: bool) -> Block<'static> {
-    let block = Block::bordered().title(format!(" {title} "));
+/// A bordered pane, highlighted when focused. Borderless, it keeps the title rule on top (and a
+/// vertical rule on its right edge if `divider` is set, between two panes).
+fn pane(title: &str, focused: bool, metrics: Metrics, divider: bool) -> Block<'static> {
+    let block = if metrics.borderless {
+        let (borders, set) = if divider {
+            (
+                Borders::TOP | Borders::RIGHT,
+                border::Set {
+                    top_right: "┬",
+                    ..border::PLAIN
+                },
+            )
+        } else {
+            (Borders::TOP, border::PLAIN)
+        };
+        // Without side borders the text would touch the edges; the divider is its own margin.
+        let right = u16::from(!divider);
+        Block::new()
+            .borders(borders)
+            .border_set(set)
+            .padding(Padding::new(1, right, 0, 0))
+    } else {
+        Block::bordered()
+    }
+    .title(format!(" {title} "));
     if focused {
         block
             .border_style(theme().accent)
@@ -185,24 +272,40 @@ fn slice_label(slice: Slice) -> &'static str {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let mut left = vec![Span::styled(" bandcamp ", theme().brand)];
-    let parts = match &app.source {
+/// Whether this frame shows the playing track in the header (and the filters in the list title).
+pub(super) fn track_in_header(app: &App, metrics: Metrics) -> bool {
+    metrics.bar == Bar::InHeader && app.screen == Screen::Browse && app.current_track().is_some()
+}
+
+/// What the list shows, `Discover`, and the filters or query that pick it.
+pub(super) fn source_parts(app: &App) -> (&'static str, Vec<String>) {
+    match &app.source {
         ListSource::Discover => {
-            left.push(Span::raw(" Discover"));
             let mut parts = crate::picker::describe(Filters::snapshot(), &app.query);
             parts.insert(1, slice_label(app.query.slice).to_owned());
-            parts
+            ("Discover", parts)
         }
-        ListSource::Search(query) => {
-            left.push(Span::raw(" Search"));
-            vec![format!("“{query}”")]
-        }
-        ListSource::Artist(name) => {
-            left.push(Span::raw(" Artist"));
-            vec![name.clone()]
-        }
-    };
+        ListSource::Search(query) => ("Search", vec![format!("“{query}”")]),
+        ListSource::Artist(name) => ("Artist", vec![name.clone()]),
+    }
+}
+
+fn draw_header(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
+    let mut left = vec![Span::styled(" bandcamp ", theme().brand)];
+    if track_in_header(app, metrics)
+        && let Some((track, clock)) = now_playing::header(app)
+    {
+        left.push(Span::raw(" "));
+        left.extend(track.spans);
+        let clock_width = u16::try_from(clock.width()).unwrap_or(u16::MAX);
+        let [l, r] =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(clock_width)]).areas(area);
+        frame.render_widget(fit(Line::from(left), usize::from(l.width)), l);
+        frame.render_widget(clock, r);
+        return;
+    }
+    let (name, parts) = source_parts(app);
+    left.push(Span::raw(format!(" {name}")));
     for part in parts {
         left.push(Span::styled(" · ", Style::new().dim()));
         left.push(Span::styled(part, Style::new().bold()));
@@ -226,7 +329,46 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(right, r);
 }
 
-fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
+/// `autoplay on · next: Passage (+2)`: the status the one-line player bar has no room for.
+fn footer_status(app: &App, width: usize) -> Line<'static> {
+    let dim = Style::new().dim();
+    let autoplay = if app.autoplay {
+        Span::styled("autoplay on", theme().accent)
+    } else {
+        Span::styled("autoplay off", dim)
+    };
+    let mut spans = vec![autoplay];
+    if let Some((next, more)) = app.up_next() {
+        let more = if more > 0 {
+            format!(" (+{more})")
+        } else {
+            String::new()
+        };
+        let label = format::truncate(&next.label(), width / 3).into_owned();
+        spans.push(Span::styled(" · next: ", dim));
+        spans.push(Span::raw(label));
+        spans.push(Span::styled(more, dim));
+    }
+    spans.push(Span::raw(" "));
+    Line::from(spans)
+}
+
+fn draw_footer(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
+    // Hints are cut first; the status stays unless it would take the whole line.
+    let mut status = Line::default();
+    let plain = app.message.is_none()
+        && app.help.is_none()
+        && app.picker.is_none()
+        && !app.search_open
+        && app.queue_view.is_none();
+    if metrics.bar != Bar::Full && app.screen == Screen::Browse && plain {
+        status = footer_status(app, usize::from(area.width));
+        if status.width() + 12 > usize::from(area.width) {
+            status = Line::default();
+        }
+    }
+    let gap = if status.width() > 0 { 2 } else { 0 };
+    let hint_room = usize::from(area.width).saturating_sub(status.width() + gap);
     let line = match &app.message {
         Some(m) if m.kind == MessageKind::Error => Line::from(format!(" {}", m.text))
             .patch_style(theme().error)
@@ -250,7 +392,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             for (i, (keys, what)) in hints.iter().enumerate() {
                 let gap = if i > 0 { 2 } else { 0 };
                 let width = gap + keys.width() + 1 + what.width();
-                if used + width > usize::from(area.width) {
+                if used + width > hint_room {
                     break;
                 }
                 used += width;
@@ -263,7 +405,11 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App) {
             Line::from(spans)
         }
     };
-    frame.render_widget(Paragraph::new(line), area);
+    let status_width = u16::try_from(status.width()).unwrap_or(u16::MAX);
+    let [left, right] =
+        Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).areas(area);
+    frame.render_widget(Paragraph::new(line), left);
+    frame.render_widget(status, right);
 }
 
 #[cfg(test)]
@@ -494,6 +640,25 @@ mod tests {
     }
 
     #[test]
+    fn cover_can_be_hidden_and_shown() {
+        let mut app = app_with_page();
+        app.art_enabled = true;
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 120, 24);
+        assert!(app.album_pane.art_box.is_some());
+        let effects = app.update(Action::ToggleCover);
+        assert!(
+            matches!(&effects[..], [Effect::SaveSettings(s)] if s.cover_hidden),
+            "remembered: {effects:?}"
+        );
+        render(&mut app, 120, 24);
+        assert!(app.album_pane.art_box.is_none(), "hidden");
+        app.update(Action::ToggleCover);
+        render(&mut app, 120, 24);
+        assert!(app.album_pane.art_box.is_some(), "shown again");
+    }
+
+    #[test]
     fn cover_grows_with_the_terminal() {
         let mut app = app_with_page();
         app.art_enabled = true;
@@ -571,6 +736,7 @@ mod tests {
         app.update(Action::Enqueue);
         app.update(Action::Down);
         app.update(Action::Enqueue);
+        app.message = None;
         let terminal = render(&mut app, 120, 24);
         let text = format!("{}", terminal.backend());
         assert!(text.contains("next: Pete Cannon"), "{text}");
@@ -820,8 +986,91 @@ mod tests {
     }
 
     #[test]
-    fn two_panes_at_80x24() {
+    fn a_click_focuses_the_pane_and_selects_the_row() {
+        let click = |column, row| Action::Click { column, row };
         let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 120, 24);
+        let (list, tracks) = (app.pane_areas.list_rows, app.pane_areas.track_rows);
+
+        app.update(click(tracks.x + 5, tracks.y + 3));
+        assert_eq!(app.focus, Focus::Album);
+        assert_eq!(app.album_pane.tracks.selected(), Some(3));
+
+        app.update(click(list.x + 5, list.y + 2));
+        assert_eq!(app.focus, Focus::Discover);
+        assert_eq!(app.table.selected(), Some(2));
+        let text = text_of(&render(&mut app, 120, 24)).join("\n");
+        assert!(text.contains("Invisible Places"), "{text}");
+
+        // Below the last release: focus only.
+        app.update(Action::FocusAlbum);
+        app.update(click(list.x + 5, list.bottom() - 1));
+        assert_eq!(app.focus, Focus::Discover);
+        assert_eq!(app.table.selected(), Some(2));
+        // The column header isn't a row.
+        app.update(click(list.x + 5, list.y - 1));
+        assert_eq!(app.table.selected(), Some(2));
+
+        // Popups swallow clicks.
+        app.update(Action::OpenSearch);
+        app.update(click(list.x + 5, list.y));
+        assert_eq!(app.table.selected(), Some(2));
+    }
+
+    #[test]
+    fn peek_shows_the_album_under_the_list() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        render(&mut app, 80, 24);
+        app.update(Action::TogglePeek);
+        let terminal = render(&mut app, 80, 24);
+        let (list, album) = (app.pane_areas.list, app.pane_areas.album);
+        assert!(
+            list.height > 0 && album.y >= list.bottom(),
+            "{list:?} {album:?}"
+        );
+        assert_eq!(app.focus, Focus::Discover, "the list keeps the keys");
+        insta::assert_snapshot!("peek_80x24", terminal.backend());
+
+        // Esc closes it (and only it); with both panes on screen there's nothing to peek at.
+        app.update(Action::BackToDiscover);
+        assert!(!app.peek);
+        render(&mut app, 80, 24);
+        assert_eq!(app.pane_areas.album, Rect::default());
+        render(&mut app, 120, 24);
+        app.update(Action::TogglePeek);
+        assert!(!app.peek);
+        assert_eq!(
+            app.message.as_ref().unwrap().text,
+            "Both panes are already showing."
+        );
+    }
+
+    #[test]
+    fn two_panes_at_100x24() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        insta::assert_snapshot!(render(&mut app, 100, 24).backend());
+    }
+
+    #[test]
+    fn album_header_wraps_instead_of_cutting_facts() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        // A pane too narrow for the facts on one line.
+        let text = text_of(&render(&mut app, 100, 24)).join("\n");
+        for fact in ["released 16 Oct 2026", "Portland, Oregon"] {
+            assert!(text.contains(fact), "{fact} cut: {text}");
+        }
+    }
+
+    #[test]
+    fn single_pane_at_80x24_describes_the_selection() {
+        let mut app = app_with_page();
+        let lines = text_of(&render(&mut app, 80, 24));
+        let strip = lines.iter().find(|l| l.contains("released")).unwrap();
+        assert!(strip.contains("10 tracks · 38 min"), "{strip}");
         show_album(&mut app, fixture_album("album"));
         insta::assert_snapshot!(render(&mut app, 80, 24).backend());
     }
@@ -925,6 +1174,115 @@ mod tests {
                 render(&mut app, width, height).backend()
             );
         }
+    }
+
+    fn text_of(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn density_sets_the_player_bar_height() {
+        // (density, terminal height, rows from the track line down to the footer)
+        for (density, height, rows) in [
+            (Density::Auto, 24, 1),
+            (Density::Auto, SHORT_HEIGHT, 2),
+            (Density::Compact, 40, 1),
+            (Density::Comfortable, 24, 2),
+        ] {
+            let mut app = app_with_page();
+            app.density = density;
+            listening_to_joyride(&mut app, PlaybackState::Playing);
+            app.update(Action::ToggleListening);
+            let lines = text_of(&render(&mut app, 100, height));
+            let bar = lines.iter().rposition(|l| l.contains("Joyride")).unwrap();
+            // The bar is just above the footer line.
+            assert_eq!(
+                usize::from(height) - 1 - bar,
+                rows,
+                "{density:?} at {height}: {lines:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tiny_terminals_show_the_track_in_the_header() {
+        let mut app = app_with_page();
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleListening);
+        let lines = text_of(&render(&mut app, 80, 15));
+        assert!(lines[0].contains("▶ Joyride — Ocean Company"), "{lines:#?}");
+        assert!(lines[0].trim_end().ends_with("1:12 / 3:51"), "{lines:#?}");
+        assert!(
+            lines[1].contains("1/1,947,113 · electronic · best-selling"),
+            "{lines:#?}"
+        );
+        assert!(!lines.iter().any(|l| l.contains('━')), "no player bar");
+        // One row taller: the compact bar is back, and the header shows the filters.
+        let lines = text_of(&render(&mut app, 80, 16));
+        assert!(lines[0].contains("Discover · electronic"), "{lines:#?}");
+        assert!(lines[14].contains("1:12 ━"), "{lines:#?}");
+        // Nothing playing: the usual header.
+        let mut idle = app_with_page();
+        let lines = text_of(&render(&mut idle, 80, 15));
+        assert!(lines[0].contains("Discover · electronic"), "{lines:#?}");
+    }
+
+    #[test]
+    fn d_cycles_the_density_and_remembers_it() {
+        let mut app = app_with_page();
+        assert_eq!(app.settings().density, None, "config's choice isn't saved");
+        let mut seen = Vec::new();
+        for _ in 0..3 {
+            let effects = app.update(Action::CycleDensity);
+            let [Effect::SaveSettings(s)] = &effects[..] else {
+                panic!("{effects:?}");
+            };
+            assert_eq!(s.density, Some(app.density));
+            seen.push(app.density);
+        }
+        assert_eq!(
+            seen,
+            [Density::Compact, Density::Comfortable, Density::Auto]
+        );
+        assert_eq!(app.message.as_ref().unwrap().text, "Density: auto");
+    }
+
+    #[test]
+    fn compact_bar_moves_autoplay_and_up_next_to_the_footer() {
+        let mut app = app_with_page();
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleListening);
+        app.update(Action::Enqueue);
+        app.message = None;
+        let lines = text_of(&render(&mut app, 100, 24));
+        let footer = lines.last().unwrap();
+        assert!(footer.contains("autoplay on"), "{footer}");
+        assert!(footer.contains("next: "), "{footer}");
+        assert!(footer.trim_start().starts_with("⏎ play"), "{footer}");
+        assert!(!lines[..23].iter().any(|l| l.contains("autoplay")));
+    }
+
+    #[test]
+    fn compact_density_drops_the_pane_borders() {
+        let mut app = app_with_page();
+        app.density = Density::Compact;
+        listening_to_joyride(&mut app, PlaybackState::Playing);
+        app.update(Action::ToggleListening);
+        insta::assert_snapshot!("compact_80x24", render(&mut app, 80, 24).backend());
+        insta::assert_snapshot!("compact_110x24", render(&mut app, 110, 24).backend());
+        insta::assert_snapshot!("compact_50x12", render(&mut app, 50, 12).backend());
+        app.update(Action::ToggleListening);
+        insta::assert_snapshot!(
+            "compact_listening_80x24",
+            render(&mut app, 80, 24).backend()
+        );
     }
 
     #[test]

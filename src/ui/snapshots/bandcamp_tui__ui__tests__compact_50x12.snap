@@ -1,0 +1,16 @@
+---
+source: src/ui/mod.rs
+expression: "render(&mut app, 50, 12).backend()"
+---
+" bandcamp  ▶ Joyride — Ocean Company  1:12 / 3:51 "
+" 1/1,947,113 · electronic · best-se… ─── loading… "
+" ♪ Ocean Company            Ocean Company     38m "
+"   Pete Cannon - From The…  N4 Records        63m "
+"   Invisible Places         Martin Stürtzer   50m "
+"   AB (EP)                  DJ Sprinter       18m "
+"                                                  "
+"                                                  "
+"                                                  "
+"                                                  "
+"  10 tracks · 38 min · released 16 Oct 2026 · Po… "
+" ⏎ play  space pause  tab pane        autoplay on "

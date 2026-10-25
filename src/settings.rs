@@ -1,5 +1,5 @@
-//! Remembered state between runs: the last Discover filters, the volume, the queue and
-//! whether the listening view was open.
+//! Remembered state between runs: the last Discover filters, the volume, the queue, whether
+//! the listening view was open and whether the cover was hidden.
 //!
 //! Stored as `state.toml` next to the log file. It's written by the app (not meant for hand
 //! editing), so a missing or broken file just means defaults.
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::Screen;
 use crate::bandcamp::{DiscoverQuery, Slice};
+use crate::config::Density;
 use crate::queue::QueueEntry;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +25,11 @@ pub struct Settings {
     pub queue: Vec<QueueEntry>,
     /// Browsing or the listening view.
     pub screen: Screen,
+    /// The album pane's cover was hidden with `C`.
+    pub cover_hidden: bool,
+    /// Chosen with `D`; wins over `config.toml`'s `density`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub density: Option<Density>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -43,6 +49,8 @@ impl Default for Settings {
             volume: 1.0,
             queue: Vec::new(),
             screen: Screen::Browse,
+            cover_hidden: false,
+            density: None,
         }
     }
 }
@@ -109,6 +117,8 @@ impl Settings {
             volume,
             queue: Vec::new(),
             screen: Screen::Browse,
+            cover_hidden: false,
+            density: None,
         }
     }
 }
@@ -167,11 +177,15 @@ mod tests {
         let mut settings = Settings::from_state(&DiscoverQuery::default(), 0.5);
         settings.queue = vec![entry, single];
         settings.screen = Screen::Listening;
+        settings.cover_hidden = true;
+        settings.density = Some(Density::Compact);
         settings.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.contains("[[queue]]"), "{text}");
         assert!(text.contains("kind = \"album\""), "{text}");
         assert!(text.contains("screen = \"listening\""), "{text}");
+        assert!(text.contains("cover_hidden = true"), "{text}");
+        assert!(text.contains("density = \"compact\""), "{text}");
         assert_eq!(Settings::load(&path), settings);
     }
 

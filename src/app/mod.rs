@@ -71,6 +71,12 @@ pub enum Action {
     FocusAlbum,
     /// Album pane: switch between the tracklist and the about/credits/bio text.
     ToggleInfo,
+    /// Hide or show the cover in the album pane (`C`).
+    ToggleCover,
+    /// Switch to the next layout density (`D`).
+    CycleDensity,
+    /// With one pane showing, show the album under the list too (`P`).
+    TogglePeek,
     /// Switch between browsing and the listening view (`v`).
     ToggleListening,
     /// Continue with the next Discover release when an album ends.
@@ -110,6 +116,11 @@ pub enum Action {
     /// The mouse wheel turned one step at this cell.
     Wheel {
         down: bool,
+        column: u16,
+        row: u16,
+    },
+    /// Left click: focus the pane under the pointer and select the row clicked.
+    Click {
         column: u16,
         row: u16,
     },
@@ -326,12 +337,16 @@ pub struct AlbumPane {
     pub art_box: Option<ArtBox>,
 }
 
-/// Where the browse panes were last drawn, so the mouse wheel can scroll the one it's over.
+/// Where the browse panes were last drawn, so the mouse can scroll or click the one it's over.
 /// A pane that isn't shown has an empty area.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PaneAreas {
     pub list: Rect,
     pub album: Rect,
+    /// The list's release rows (below its column header): row `y` is release `offset + y`.
+    pub list_rows: Rect,
+    /// The album pane's track rows, likewise.
+    pub track_rows: Rect,
 }
 
 /// State of the `?` help overlay.
@@ -398,6 +413,10 @@ pub struct App {
     pub screen: Screen,
     /// Switch to the listening view whenever the queue starts a release (`config.toml`).
     pub listen_on_queue: bool,
+    /// How tightly the layout is packed (`config.toml`, or `D`).
+    pub density: crate::config::Density,
+    /// Set once `D` chose the density (this run or an earlier one): then it's remembered.
+    pub density_chosen: bool,
     pub album_pane: AlbumPane,
     /// Set while rendering.
     pub pane_areas: PaneAreas,
@@ -407,6 +426,10 @@ pub struct App {
     albums: Lru<ItemId, Arc<Album>>,
     /// Whether the terminal shows cover art (decided once at startup).
     pub art_enabled: bool,
+    /// The album shows under the list in the single-pane layout (`P`).
+    pub peek: bool,
+    /// The user hid the album pane's cover (`C`) to give the text and tracklist the room.
+    pub cover_hidden: bool,
     /// The terminal's cell size in pixels, for sizing covers (set with `art_enabled`).
     pub art_font: ratatui_image::FontSize,
     art_sources: Lru<ArtId, ArtSource>,
@@ -471,12 +494,16 @@ impl App {
             focus: Focus::Discover,
             screen: Screen::Browse,
             listen_on_queue: false,
+            density: crate::config::Density::default(),
+            density_chosen: false,
             album_pane: AlbumPane::default(),
             pane_areas: PaneAreas::default(),
             listening: ListeningPane::default(),
             picker: None,
             albums: Lru::new(ALBUM_CACHE_SIZE),
             art_enabled: false,
+            cover_hidden: false,
+            peek: false,
             art_font: ratatui_image::FontSize::new(10, 20),
             art_sources: Lru::new(ART_SOURCE_CACHE_SIZE),
             arts: Lru::new(ART_CACHE_SIZE),
@@ -603,6 +630,10 @@ impl App {
                 self.view_update(&action);
                 vec![]
             }
+            Action::TogglePeek => self.toggle_peek(),
+            Action::BackToDiscover if self.peek => self.toggle_peek(),
+            Action::CycleDensity => self.cycle_density(),
+            Action::ToggleCover => self.toggle_cover(),
             Action::ToggleListening => {
                 self.screen = match self.screen {
                     Screen::Browse => Screen::Listening,
@@ -641,6 +672,7 @@ impl App {
             }
             // Picker keys with no picker open (handled above when one is), and resizes, which
             // only need a redraw.
+            Action::Click { column, row } => self.click(Position::new(column, row)),
             // Wheel steps were turned into moves above.
             Action::Wheel { .. }
             | Action::ClosePopup
@@ -680,6 +712,64 @@ impl App {
             }
         }
         if down { Action::Down } else { Action::Up }
+    }
+
+    /// `P` (or `esc` while peeking): the album under the list, when only one pane fits.
+    fn toggle_peek(&mut self) -> Vec<Effect> {
+        let both = self.pane_areas.list.width > 0 && self.pane_areas.album.width > 0;
+        if both && !self.peek {
+            self.info("Both panes are already showing.");
+        } else {
+            self.peek = !self.peek;
+        }
+        vec![]
+    }
+
+    /// `D`: the next layout density, remembered from now on.
+    fn cycle_density(&mut self) -> Vec<Effect> {
+        self.density = self.density.next();
+        self.density_chosen = true;
+        self.info(format!("Density: {}", self.density.name()));
+        vec![self.save_settings()]
+    }
+
+    /// `C`: hide or show the album pane's cover, remembered.
+    fn toggle_cover(&mut self) -> Vec<Effect> {
+        self.cover_hidden = !self.cover_hidden;
+        vec![self.save_settings()]
+    }
+
+    /// Focuses the pane at `at` and selects the release or track there. Popups swallow clicks
+    /// before this; the listening view ignores them.
+    fn click(&mut self, at: Position) -> Vec<Effect> {
+        if self.screen != Screen::Browse {
+            return vec![];
+        }
+        let areas = self.pane_areas;
+        let row_at = |rows: Rect, offset: usize| {
+            rows.contains(at)
+                .then(|| offset + usize::from(at.y - rows.y))
+        };
+        if areas.list.contains(at) {
+            self.focus = Focus::Discover;
+            if let Some(index) = row_at(areas.list_rows, self.table.offset())
+                && index < self.discover.items.len()
+            {
+                return self.move_by(delta(self.table.selected().unwrap_or(0), index));
+            }
+        } else if areas.album.contains(at) {
+            self.focus = Focus::Album;
+            let len = match self.album_view() {
+                AlbumView::Loaded(album) if !self.album_pane.show_info => album.tracks.len(),
+                _ => 0,
+            };
+            if let Some(index) = row_at(areas.track_rows, self.album_pane.tracks.offset())
+                && index < len
+            {
+                return self.move_by(delta(self.album_pane.tracks.selected().unwrap_or(0), index));
+            }
+        }
+        vec![]
     }
 
     /// The open popup handles `action` first; `None` means no popup took it.
@@ -757,6 +847,8 @@ impl App {
         let mut settings = Settings::from_state(&self.query, self.player.volume);
         settings.queue = self.queue.to_saved();
         settings.screen = self.screen;
+        settings.cover_hidden = self.cover_hidden;
+        settings.density = self.density_chosen.then_some(self.density);
         settings
     }
 
@@ -945,4 +1037,13 @@ fn scrolled(scroll: u16, delta: isize) -> u16 {
 
 fn page(rows: usize) -> isize {
     isize::try_from(rows.saturating_sub(1).max(1)).unwrap_or(isize::MAX)
+}
+
+/// The move from row `from` to row `to`.
+fn delta(from: usize, to: usize) -> isize {
+    let (from, to) = (
+        isize::try_from(from).unwrap_or(isize::MAX),
+        isize::try_from(to).unwrap_or(isize::MAX),
+    );
+    to - from
 }

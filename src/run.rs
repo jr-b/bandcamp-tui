@@ -67,8 +67,14 @@ pub struct Services {
     pub autoplay: bool,
     /// Switch to the listening view when the queue starts a release (from `config.toml`).
     pub listen_on_queue: bool,
+    /// How tightly to pack the layout (from `config.toml`).
+    pub density: crate::config::Density,
+    /// The density last chosen with `D` (from `state.toml`); wins over `density`.
+    pub chosen_density: Option<crate::config::Density>,
     /// Browsing or the listening view, as last time.
     pub screen: crate::app::Screen,
+    /// The cover hidden with `C`, as last time.
+    pub cover_hidden: bool,
     /// The saved play queue (restored without starting playback).
     pub queue: Vec<crate::queue::QueueEntry>,
 }
@@ -111,7 +117,10 @@ pub async fn run(
         art_note,
         autoplay,
         listen_on_queue,
+        density,
+        chosen_density,
         screen,
+        cover_hidden,
         queue,
     } = services;
     let (results_tx, mut results) = unbounded_channel();
@@ -123,7 +132,10 @@ pub async fn run(
     }
     app.autoplay = autoplay;
     app.listen_on_queue = listen_on_queue;
+    app.density = chosen_density.unwrap_or(density);
+    app.density_chosen = chosen_density.is_some();
     app.screen = screen;
+    app.cover_hidden = cover_hidden;
     app.queue = crate::queue::Queue::from_saved(queue);
     if let Some(note) = art_note {
         app.update(Action::Notice(note.to_owned()));

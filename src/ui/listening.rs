@@ -8,8 +8,8 @@ use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 use super::now_playing::{progress_line, state_label};
-use super::pane;
 use super::theme::theme;
+use super::{Metrics, pane};
 use crate::app::{App, UpNext};
 use crate::art::{Art, ArtBox};
 use crate::bandcamp::Album;
@@ -19,13 +19,14 @@ use crate::player::PlaybackState;
 /// The progress line never gets wider than this, so it stays readable on wide terminals.
 const MAX_PROGRESS_COLS: u16 = 72;
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App, metrics: Metrics) {
     let hint = if app.listening.show_info {
         " i cover  v browse "
     } else {
         " i about  v browse "
     };
-    let block = pane("Listening", true).title(Line::from(hint).right_aligned().dim());
+    let block =
+        pane("Listening", true, metrics, false).title(Line::from(hint).right_aligned().dim());
     let inner = block.inner(area);
     frame.render_widget(block, area);
     // Recorded for `App::after_draw`, which fetches or re-encodes the cover at this size.
