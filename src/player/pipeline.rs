@@ -9,13 +9,12 @@ use std::thread;
 use std::time::Duration;
 
 use rodio::{Player, Sample};
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{Decoder, DecoderOptions};
-use symphonia::core::errors::Error as SymphoniaError;
-use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+use symphonia::core::errors::{Error as SymphoniaError, SeekErrorKind};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 use symphonia::core::units::{Time, TimeBase};
 use url::Url;
 
@@ -191,7 +190,7 @@ struct Worker {
 
 struct Decoding {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Box<dyn AudioDecoder>,
     track_id: u32,
     time_base: Option<TimeBase>,
     sample_rate: rodio::SampleRate,
@@ -226,7 +225,7 @@ impl Worker {
 
         let (mut producer, mut stats) = self.queue_segment(&mut d, start)?;
         // Reused across packets; reallocated only if a packet is larger than any before.
-        let mut samples: Option<(SampleBuffer<Sample>, usize)> = None;
+        let mut samples: Vec<Sample> = Vec::new();
         loop {
             if self.stopped() {
                 return Ok(());
@@ -236,10 +235,8 @@ impl Worker {
             }
 
             let packet = match d.format.next_packet() {
-                Ok(p) => p,
-                Err(SymphoniaError::IoError(e))
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
+                Ok(Some(p)) => p,
+                Ok(None) => {
                     // End of track. Stay around so a seek backwards still works.
                     stats.decode_done.store(true, Ordering::Release);
                     match self.commands.recv() {
@@ -263,7 +260,7 @@ impl Worker {
                     });
                 }
             };
-            if packet.track_id() != d.track_id {
+            if packet.track_id != d.track_id {
                 continue;
             }
             let decoded = match d.decoder.decode(&packet) {
@@ -275,17 +272,9 @@ impl Worker {
                 }
                 Err(e) => return Err(format!("decode error: {e}").into()),
             };
-            let frames = decoded.capacity();
-            let buf = match &mut samples {
-                Some((buf, cap)) if *cap >= frames => buf,
-                _ => {
-                    let buf = SampleBuffer::new(frames as u64, *decoded.spec());
-                    &mut samples.insert((buf, frames)).0
-                }
-            };
-            buf.copy_interleaved_ref(decoded);
+            decoded.copy_to_vec_interleaved(&mut samples);
 
-            match self.push(&mut producer, buf.samples(), &mut d)? {
+            match self.push(&mut producer, &samples, &mut d)? {
                 Some(next) => (producer, stats) = next,
                 None if self.stopped() => return Ok(()),
                 None => {}
@@ -378,18 +367,26 @@ fn open_decoder(source: HttpSource) -> Result<Decoding, String> {
     let mss = MediaSourceStream::new(Box::new(source), MediaSourceStreamOptions::default());
     let mut hint = Hint::new();
     hint.with_extension("mp3");
-    let format_opts = FormatOptions {
-        enable_gapless: true,
-        ..FormatOptions::default()
-    };
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &format_opts, &MetadataOptions::default())
+    let format = symphonia::default::get_probe()
+        .probe(
+            &hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| format!("unsupported stream: {e}"))?;
-    let format = probed.format;
-    let track = format.default_track().ok_or("stream has no audio track")?;
-    let params = track.codec_params.clone();
+    let track = format
+        .default_track(TrackType::Audio)
+        .ok_or("stream has no audio track")?;
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or("stream has no audio codec parameters")?
+        .clone();
+    // Gapless (trimming encoder delay/padding) is now a decoder option.
     let decoder = symphonia::default::get_codecs()
-        .make(&params, &DecoderOptions::default())
+        .make_audio_decoder(&params, &AudioDecoderOptions::default().gapless(true))
         .map_err(|e| format!("unsupported codec: {e}"))?;
     let sample_rate = params
         .sample_rate
@@ -402,7 +399,7 @@ fn open_decoder(source: HttpSource) -> Result<Decoding, String> {
         .unwrap_or(STEREO);
     Ok(Decoding {
         track_id: track.id,
-        time_base: params.time_base,
+        time_base: track.time_base,
         format,
         decoder,
         sample_rate,
@@ -417,15 +414,17 @@ fn seek(d: &mut Decoding, to: Duration) -> Result<Duration, SymphoniaError> {
     let seeked = d.format.seek(
         SeekMode::Coarse,
         SeekTo::Time {
-            time: Time::from(to.as_secs_f64()),
+            time: Time::try_from_secs_f64(to.as_secs_f64())
+                .ok_or(SymphoniaError::SeekError(SeekErrorKind::OutOfRange))?,
             track_id: Some(d.track_id),
         },
     )?;
     d.decoder.reset();
-    let landed = d.time_base.map_or(to, |tb| {
-        let t = tb.calc_time(seeked.actual_ts);
-        Duration::from_secs(t.seconds) + Duration::from_secs_f64(t.frac)
-    });
+    let landed = d
+        .time_base
+        .and_then(|tb| tb.calc_time(seeked.actual_ts))
+        .and_then(|t| Duration::try_from_secs_f64(t.as_secs_f64()).ok())
+        .unwrap_or(to);
     Ok(landed)
 }
 
