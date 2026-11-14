@@ -204,8 +204,7 @@ impl Read for HttpSource {
             }
             let pos = self.pos;
             if (state.buf_start..state.buf_end()).contains(&pos) {
-                #[expect(clippy::cast_possible_truncation, reason = "bounded by buffer_bytes")]
-                let offset = (pos - state.buf_start) as usize;
+                let offset = usize::try_from(pos - state.buf_start).map_err(io::Error::other)?;
                 let n = out.len().min(state.buf.len() - offset);
                 let (a, b) = state.buf.as_slices();
                 copy_from_ring(a, b, offset, &mut out[..n]);
@@ -507,8 +506,8 @@ async fn store(shared: &Shared, generation: u64, mut chunk: Bytes) -> Option<Out
             // Drop data the reader is done with, keeping `back_bytes` behind it.
             let keep_from = s.read_pos.saturating_sub(config.back_bytes as u64);
             if keep_from > s.buf_start {
-                #[expect(clippy::cast_possible_truncation, reason = "bounded by buffer_bytes")]
-                let drop_n = ((keep_from - s.buf_start) as usize).min(s.buf.len());
+                let drop_n = usize::try_from(keep_from - s.buf_start)
+                    .map_or(s.buf.len(), |n| n.min(s.buf.len()));
                 s.buf.drain(..drop_n);
                 s.buf_start += drop_n as u64;
             }

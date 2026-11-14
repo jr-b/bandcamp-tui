@@ -147,6 +147,7 @@ fn main() -> Result<()> {
         config.theme,
         &config.colors,
         theme::no_color(),
+        theme::detect_depth(),
         theme::detect_background,
     ));
 

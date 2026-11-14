@@ -86,6 +86,7 @@ pub const HELP: &[(&str, &[(&str, &str)])] = &[
             ("c", "jump to what's playing"),
             ("wheel", "scroll what's under the pointer"),
             ("click", "focus a pane, select a row"),
+            ("click outside", "close a popup"),
             ("i", "about / credits / artist bio"),
             ("C", "hide / show the cover"),
             ("D", "density: auto / compact / comfortable"),

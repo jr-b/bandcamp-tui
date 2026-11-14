@@ -100,7 +100,7 @@ impl App {
             }
             Err(e) => {
                 if pending.is_some() {
-                    self.error(format!("Couldn't load release: {e}"));
+                    self.error(format!("Couldn't load release: {e}. Press ⏎ to retry."));
                 }
                 self.album_errors.insert(id, e);
             }

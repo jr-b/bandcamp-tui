@@ -96,7 +96,7 @@ impl App {
             }
             Err(e) => {
                 self.autoplay_after = None;
-                self.error(format!("Couldn't load Discover: {e}"));
+                self.error(format!("Couldn't load Discover: {e}. Press r to retry."));
                 self.discover.error = Some(e);
                 vec![]
             }

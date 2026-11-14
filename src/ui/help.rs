@@ -8,7 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Padding, Paragraph};
 
 use super::theme::theme;
-use crate::app::HelpView;
+use crate::app::{HelpView, PopupAreas};
 use crate::input::HELP;
 
 const KEY_WIDTH: usize = 18;
@@ -79,7 +79,7 @@ fn columns(max_width: u16) -> Vec<Vec<Line<'static>>> {
     }
 }
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, view: &mut HelpView) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, view: &mut HelpView) -> PopupAreas {
     let columns = columns(area.width);
     let text_rows = len_u16(columns.iter().map(Vec::len).max().unwrap_or(0));
     let text_cols = columns
@@ -135,5 +135,9 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, view: &mut HelpView) {
     let areas = Layout::horizontal(constraints).split(text);
     for (column, area) in columns.into_iter().zip(areas.iter().step_by(2)) {
         frame.render_widget(Paragraph::new(column).scroll((view.scroll, 0)), *area);
+    }
+    PopupAreas {
+        frame: popup,
+        rows: Rect::default(),
     }
 }

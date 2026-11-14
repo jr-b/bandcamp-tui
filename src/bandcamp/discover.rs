@@ -22,6 +22,18 @@ pub enum Slice {
     Random,
 }
 
+impl Slice {
+    /// How the header and messages name it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Top => "best-selling",
+            Self::New => "new arrivals",
+            Self::Random => "surprise me",
+        }
+    }
+}
+
 /// Filters for a discover request. The defaults match the discover page with nothing selected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoverQuery {
@@ -122,6 +134,7 @@ impl<'a> RequestBody<'a> {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct Response {
     results: Vec<WireItem>,
     #[serde(default)]
@@ -130,6 +143,7 @@ pub(crate) struct Response {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WireItem {
     item_id: u64,
     item_type: WireItemType,
@@ -160,12 +174,14 @@ enum WireItemType {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WireImage {
     image_id: u64,
     #[serde(default)]
     is_art: bool,
 }
 
+/// Still `snake_case` (`is_money`) inside the `camelCase` response; no key we read has two words.
 #[derive(Debug, Deserialize)]
 struct WirePrice {
     amount: u64,
@@ -281,6 +297,47 @@ mod tests {
         );
     }
 
+    /// A response captured from bandcamp.com on 2026-11-13, when `discover_web` switched to
+    /// `camelCase` keys (the price's own keys stayed `snake_case`).
+    #[test]
+    fn parses_the_live_camel_case_response() {
+        let page = parse(include_str!("../../tests/fixtures/discover_web_live.json"));
+        assert_eq!(page.total, 1_963_543);
+        assert!(page.next_cursor.is_some());
+        assert_eq!(page.items.len(), 3);
+        let first = &page.items[0];
+        assert_eq!(first.id, ItemId(3_824_699_876));
+        assert_eq!(first.kind, TralbumKind::Album);
+        assert_eq!(first.title, "16-Bit Adventure");
+        assert_eq!(first.artist, "Amynedd", "albumArtist is null");
+        assert_eq!(first.band_id, BandId(2_358_276_633));
+        assert_eq!(first.band_location.as_deref(), Some("Birmingham, UK"));
+        assert_eq!(
+            first.url.as_str(),
+            "https://amynedd.bandcamp.com/album/16-bit-adventure"
+        );
+        assert_eq!(first.art_id, Some(ArtId(1_621_207_929)));
+        assert_eq!(
+            first.release_date,
+            Some(Date {
+                year: 2020,
+                month: 10,
+                day: 21
+            })
+        );
+        assert_eq!(first.track_count, Some(12));
+        assert_eq!(first.duration.map(|d| d.as_secs()), Some(1716));
+        assert_eq!(
+            first.price,
+            Some(Price {
+                amount_minor: 400,
+                currency: "GBP".into()
+            })
+        );
+        assert!(!first.is_preorder);
+        assert!(!first.is_free_download);
+    }
+
     #[test]
     fn artist_falls_back_to_band_name() {
         let page = parse(include_str!(
@@ -306,13 +363,13 @@ mod tests {
     fn skips_merch_and_tolerates_nulls() {
         let page = parse(
             r#"{"results":[
-                {"item_id":1,"item_type":"p","title":"T-Shirt","item_url":"https://x.bandcamp.com/merch/t",
-                 "band_id":2,"band_name":"X"},
-                {"item_id":3,"item_type":"a","title":"LP","item_url":"https://x.bandcamp.com/album/lp",
-                 "band_id":2,"band_name":"X","album_artist":"","band_location":null,"primary_image":null,
-                 "release_date":null,"track_count":null,"duration":null,"price":null,
-                 "is_album_preorder":null,"is_free_download":null,"some_new_field":42}
-            ],"result_count":2,"cursor":null}"#,
+                {"itemId":1,"itemType":"p","title":"T-Shirt","itemUrl":"https://x.bandcamp.com/merch/t",
+                 "bandId":2,"bandName":"X"},
+                {"itemId":3,"itemType":"a","title":"LP","itemUrl":"https://x.bandcamp.com/album/lp",
+                 "bandId":2,"bandName":"X","albumArtist":"","bandLocation":null,"primaryImage":null,
+                 "releaseDate":null,"trackCount":null,"duration":null,"price":null,
+                 "isAlbumPreorder":null,"isFreeDownload":null,"someNewField":42}
+            ],"resultCount":2,"cursor":null}"#,
         );
         assert_eq!(page.items.len(), 1);
         let lp = &page.items[0];

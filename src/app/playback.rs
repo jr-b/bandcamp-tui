@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use super::{AlbumView, App, Effect, Focus, PlayerCommand, Screen, VOLUME_STEP};
+use super::{
+    AlbumView, App, Effect, Focus, NO_AUDIO, PlayerCommand, Screen, UNPLAYABLE_HINT, VOLUME_STEP,
+};
 use crate::bandcamp::{Album, ItemId};
 use crate::player::{PlaybackState, PlayerEvent, QueueTrack, Status};
 
@@ -27,7 +29,10 @@ impl App {
         if let Some(track) = album.tracks.get(index)
             && !track.is_playable()
         {
-            self.error(format!("{} isn't available for streaming.", track.title));
+            self.error(format!(
+                "{} isn't available for streaming. {UNPLAYABLE_HINT}",
+                track.title
+            ));
             return vec![];
         }
         self.play_or_fetch(album.id, Some(index))
@@ -52,11 +57,14 @@ impl App {
             } else {
                 "no tracks are streamable"
             };
-            self.error(format!("Can't play {}: {why}.", album.title));
+            self.error(format!(
+                "Can't play {}: {why}. {UNPLAYABLE_HINT}",
+                album.title
+            ));
             return vec![];
         }
         if !self.player_available {
-            self.error("No audio output available.");
+            self.error(NO_AUDIO);
             return vec![];
         }
         // Same album: jump within the existing queue instead of rebuilding it (unless only one

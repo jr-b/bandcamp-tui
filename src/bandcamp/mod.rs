@@ -273,12 +273,31 @@ mod tests {
     fn decode_error_reports_field_path() {
         let err = decode::<discover::Response>(
             DISCOVER,
-            br#"{"results":[{"item_id":"not a number"}],"cursor":null}"#,
+            br#"{"results":[{"itemId":"not a number"}],"cursor":null}"#,
         )
         .unwrap_err();
         assert!(
-            matches!(&err, Error::Decode { path, .. } if path == "results[0].item_id"),
+            matches!(&err, Error::Decode { path, .. } if path == "results[0].itemId"),
             "{err:?}"
+        );
+    }
+
+    #[test]
+    fn a_changed_format_tells_the_user_to_update_not_serde_details() {
+        // The pre-2026-11 snake_case shape, which made Discover fail to load.
+        let err = parse_discover(r#"{"results":[{"item_id":1}],"cursor":null}"#).unwrap_err();
+        assert_eq!(
+            err.user_message(),
+            "Bandcamp changed its reply format; update bandcamp-tui (details in the log)"
+        );
+        // Other errors keep their whole chain: it says what to check.
+        let err = Error::Status {
+            endpoint: DISCOVER,
+            status: reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        };
+        assert_eq!(
+            err.user_message(),
+            "discover_web returned HTTP 503 Service Unavailable"
         );
     }
 

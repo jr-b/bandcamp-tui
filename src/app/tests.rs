@@ -130,6 +130,24 @@ fn ignores_responses_for_a_replaced_query() {
 }
 
 #[test]
+fn s_says_which_sort_it_switched_to() {
+    let mut app = loaded();
+    let mut seen = Vec::new();
+    for _ in 0..3 {
+        app.update(Action::CycleSlice);
+        seen.push(app.message.as_ref().unwrap().text.clone());
+    }
+    assert_eq!(
+        seen,
+        [
+            "Sort: new arrivals",
+            "Sort: surprise me",
+            "Sort: best-selling"
+        ]
+    );
+}
+
+#[test]
 fn caps_the_list_size() {
     let mut app = loaded();
     let generation = app.discover.generation;
@@ -1279,6 +1297,148 @@ fn no_audio_output_still_allows_browsing() {
     app.update(Action::Down);
     assert_eq!(app.table.selected(), Some(1));
     assert_eq!(app.update(Action::VolumeUp), []);
+}
+
+fn error_text(app: &App) -> &str {
+    let message = app.message.as_ref().expect("an error message");
+    assert_eq!(message.kind, MessageKind::Error, "{}", message.text);
+    &message.text
+}
+
+#[test]
+fn no_audio_output_says_what_to_check() {
+    let (mut app, _) = App::new(DiscoverQuery::default(), false);
+    assert!(
+        error_text(&app).ends_with("Check the sound device, then restart."),
+        "{}",
+        error_text(&app)
+    );
+    let generation = app.discover.generation;
+    app.update(Action::DiscoverLoaded {
+        generation,
+        result: Ok(page_fixture()),
+    });
+    let id = app.selected().unwrap().id;
+    app.update(Action::AlbumLoaded {
+        id,
+        result: Ok(album_fixture("album")),
+    });
+    assert_eq!(app.update(Action::Play), []);
+    assert!(
+        error_text(&app).ends_with("Check the sound device, then restart."),
+        "{}",
+        error_text(&app)
+    );
+    assert_eq!(app.update(Action::Enqueue), []);
+    assert!(error_text(&app).ends_with("Check the sound device, then restart."));
+}
+
+#[test]
+fn a_failed_discover_load_says_how_to_retry() {
+    let mut app = loaded();
+    let Effect::FetchDiscover { generation, .. } = app.update(Action::Refresh)[0].clone() else {
+        panic!("refresh fetches");
+    };
+    app.update(Action::DiscoverLoaded {
+        generation,
+        result: Err("HTTP 503".into()),
+    });
+    assert_eq!(
+        error_text(&app),
+        "Couldn't load Discover: HTTP 503. Press r to retry."
+    );
+    assert!(matches!(
+        app.update(Action::Refresh)[..],
+        [Effect::FetchDiscover { cursor: None, .. }]
+    ));
+}
+
+#[test]
+fn a_release_that_fails_to_load_says_how_to_retry() {
+    let mut app = loaded();
+    let [Effect::FetchAlbum { id, .. }] = app.update(Action::Play)[..] else {
+        panic!("play fetches the release");
+    };
+    app.update(Action::AlbumLoaded {
+        id,
+        result: Err("HTTP 500".into()),
+    });
+    assert_eq!(
+        error_text(&app),
+        "Couldn't load release: HTTP 500. Press ⏎ to retry."
+    );
+    assert!(
+        matches!(app.update(Action::Play)[..], [Effect::FetchAlbum { id: again, .. }] if again == id),
+        "⏎ retries"
+    );
+}
+
+#[test]
+fn an_artist_that_fails_to_load_says_how_to_go_back() {
+    let mut app = loaded();
+    search_for(&mut app, "aphex twin");
+    app.update(Action::Play);
+    app.update(Action::ArtistLoaded {
+        band_id: BandId(1_533_096_991),
+        result: Err("HTTP 404".into()),
+    });
+    assert_eq!(
+        error_text(&app),
+        "Couldn't load artist: HTTP 404. Press esc to go back."
+    );
+    app.update(Action::BackToDiscover);
+    assert_eq!(app.source, ListSource::Discover);
+}
+
+#[test]
+fn unplayable_releases_point_to_bandcamp() {
+    let mut app = loaded();
+    let id = app.selected().unwrap().id;
+    app.update(Action::AlbumDue(id));
+    app.update(Action::AlbumLoaded {
+        id,
+        result: Ok(album_fixture("preorder")),
+    });
+    app.update(Action::Play);
+    assert!(
+        error_text(&app).ends_with("Press o to open it on bandcamp.com."),
+        "{}",
+        error_text(&app)
+    );
+    app.update(Action::FocusAlbum);
+    app.update(Action::Play);
+    assert!(
+        error_text(&app).ends_with("Press o to open it on bandcamp.com."),
+        "{}",
+        error_text(&app)
+    );
+    app.update(Action::Enqueue);
+    assert!(
+        error_text(&app).ends_with("Press o to open it on bandcamp.com."),
+        "{}",
+        error_text(&app)
+    );
+    assert!(matches!(
+        app.update(Action::OpenInBrowser)[..],
+        [Effect::OpenUrl(_)]
+    ));
+}
+
+#[test]
+fn a_full_queue_says_how_to_make_room() {
+    let mut app = playing_first();
+    for _ in 0..crate::queue::MAX_ENTRIES {
+        app.update(Action::Enqueue);
+    }
+    assert_eq!(app.queue.len(), crate::queue::MAX_ENTRIES);
+    assert_eq!(app.update(Action::Enqueue), []);
+    assert_eq!(
+        error_text(&app),
+        format!(
+            "The queue is full ({} entries). Press u to remove some.",
+            crate::queue::MAX_ENTRIES
+        )
+    );
 }
 
 fn playing_track(app: &mut App, index: usize) {

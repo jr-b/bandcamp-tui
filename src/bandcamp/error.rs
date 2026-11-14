@@ -36,4 +36,18 @@ pub enum Error {
     },
 }
 
+impl Error {
+    /// One line for the status bar. A decode error means Bandcamp changed its format, which
+    /// only a new version fixes; serde's details are for the log, not the listener.
+    #[must_use]
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::Decode { .. } => {
+                "Bandcamp changed its reply format; update bandcamp-tui (details in the log)".into()
+            }
+            _ => crate::format::error_chain(self),
+        }
+    }
+}
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -1,12 +1,13 @@
 ---
 source: src/ui/mod.rs
+assertion_line: 605
 expression: "render(&mut app, 100, 24).backend()"
 ---
 " bandcamp  Discover · electronic · best-selling                                                     "
-"┌ Discover · 1/1,947,113 ─────────────────── loading… ┐┌ Album ────────────────────────────────────┐"
+"┌ Discover · 1/1,947,113 ─────────────────── loading… ┬ Album ─────────────────────────────────────┐"
 "│  Title              ┌ Genre or tag ────────────────────────────────────────┐                     │"
-"│  Ocean Company      │› type to search                                      │Hotel Pools          │"
-"│  Pete Cannon - From │──────────────────────────────────────────────────────│ Portland, Oregon    │"
+"│  Ocean Company      │› type to search                                      │otel Pools           │"
+"│  Pete Cannon - From │──────────────────────────────────────────────────────│Portland, Oregon     │"
 "│  Invisible Places   │  All genres                                          │                     │"
 "│  AB (EP)            │› electronic                                          │                     │"
 "│                     │    house                                             │                     │"
@@ -23,6 +24,6 @@ expression: "render(&mut app, 100, 24).backend()"
 "│                     │    trance                                            │                     │"
 "│                     │    glitch                                            │                     │"
 "│                     └──────────────────────────────────────────────────────┘                     │"
-"└─────────────────────────────────────────────────────┘└───────────────────────────────────────────┘"
+"└─────────────────────────────────────────────────────┴────────────────────────────────────────────┘"
 " Nothing playing. Select a release and press ⏎.                                            vol 100% "
 " type to search  ↑↓ move  ⏎ select  esc cancel  ctrl-w delete word  ctrl-u clear                    "
