@@ -1,12 +1,13 @@
 ---
 source: src/ui/mod.rs
+assertion_line: 714
 expression: "render(&mut app, 110, 24).backend()"
 ---
 " bandcamp  Discover · electronic · best-selling                                                               "
-"┌ Discover · 1/1,947,113 ───────────────────────── loading… ┐┌ Album ────────────────────────────────────────┐"
+"┌ Discover · 1/1,947,113 ───────────────────────── loading… ┬ Album ─────────────────────────────────────────┐"
 "│  Title           ┌ Search Bandcamp ─────────────────────────────────────────────────────┐                  │"
-"│  Ocean Company   │› artist, album or track                                              │ools              │"
-"│  Pete Cannon - Fr│──────────────────────────────────────────────────────────────────────│nd, Oregon        │"
+"│  Ocean Company   │› artist, album or track                                              │ols               │"
+"│  Pete Cannon - Fr│──────────────────────────────────────────────────────────────────────│d, Oregon         │"
 "│  Invisible Places│                                                                      │                  │"
 "│  AB (EP)         │                                                                      │                  │"
 "│                  │                                                                      │                  │"
@@ -23,6 +24,6 @@ expression: "render(&mut app, 110, 24).backend()"
 "│                  │                                                                      │                  │"
 "│                  │                                                                      │                  │"
 "│                  └──────────────────────────────────────────────────────────────────────┘                  │"
-"└───────────────────────────────────────────────────────────┘└───────────────────────────────────────────────┘"
+"└───────────────────────────────────────────────────────────┴────────────────────────────────────────────────┘"
 " Nothing playing. Select a release and press ⏎.                                                      vol 100% "
 " type to search  ↑↓ move  ⏎ select  esc cancel  ctrl-w delete word  ctrl-u clear                              "

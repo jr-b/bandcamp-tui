@@ -7,11 +7,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 
 use super::theme::{self, theme};
-use crate::app::App;
+use crate::app::{App, PopupAreas};
 use crate::bandcamp::TralbumKind;
 use crate::format;
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) -> PopupAreas {
     let width = area.width.saturating_sub(4).clamp(36, 76);
     let wanted = u16::try_from(app.queue.len())
         .unwrap_or(u16::MAX)
@@ -57,11 +57,15 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     };
     frame.render_widget(now_line, now);
     frame.render_widget(Line::from("─".repeat(usize::from(rule.width))).dim(), rule);
+    let no_rows = PopupAreas {
+        frame: popup,
+        rows: Rect::default(),
+    };
 
     if app.queue.is_empty() {
         let hint = "Empty. Press e on a release (or a track) to add it; E plays it next.";
         frame.render_widget(Line::from(hint).dim(), list);
-        return;
+        return no_rows;
     }
     // "› " highlight + "12  " number + "album  " badge.
     let text_width = usize::from(list.width).saturating_sub(2 + 4 + 7);
@@ -86,7 +90,12 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, app: &mut App) {
     let widget = List::new(items)
         .highlight_style(theme::SELECTED)
         .highlight_symbol("› ");
-    if let Some(view) = app.queue_view.as_mut() {
-        frame.render_stateful_widget(widget, list, view);
+    let Some(view) = app.queue_view.as_mut() else {
+        return no_rows;
+    };
+    frame.render_stateful_widget(widget, list, view);
+    PopupAreas {
+        rows: list,
+        ..no_rows
     }
 }

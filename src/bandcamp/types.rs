@@ -20,7 +20,7 @@ macro_rules! id_type {
 }
 
 id_type!(
-    /// An album or track id (`item_id` in discover, `id` in `tralbum_details`).
+    /// An album or track id (`itemId` in discover, `id` in `tralbum_details`).
     ItemId
 );
 id_type!(
@@ -96,9 +96,9 @@ impl Date {
         (1..=31).contains(&day).then_some(Self { year, month, day })
     }
 
-    /// Converts a unix timestamp (seconds) to a UTC date.
+    /// Converts a unix timestamp (seconds) to a UTC date, or `None` if the year doesn't fit.
     #[must_use]
-    pub fn from_unix(secs: i64) -> Self {
+    pub fn from_unix(secs: i64) -> Option<Self> {
         // Howard Hinnant's `civil_from_days`, see
         // https://howardhinnant.github.io/date_algorithms.html#civil_from_days
         let z = secs.div_euclid(86_400) + 719_468;
@@ -110,16 +110,11 @@ impl Date {
         let day = doy - (153 * mp + 2) / 5 + 1;
         let month = if mp < 10 { mp + 3 } else { mp - 9 };
         let year = yoe + era * 400 + i64::from(month <= 2);
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "the algorithm guarantees day 1..=31 and month 1..=12"
-        )]
-        Self {
-            year: year as i32,
-            month: month as u8,
-            day: day as u8,
-        }
+        Some(Self {
+            year: i32::try_from(year).ok()?,
+            month: u8::try_from(month).ok()?,
+            day: u8::try_from(day).ok()?,
+        })
     }
 }
 
@@ -153,38 +148,38 @@ mod tests {
     fn date_from_unix() {
         assert_eq!(
             Date::from_unix(0),
-            Date {
+            Some(Date {
                 year: 1970,
                 month: 1,
                 day: 1
-            }
+            })
         );
         // 2026-10-16T00:00:00Z, the release date in the album fixture.
         assert_eq!(
             Date::from_unix(1_792_108_800),
-            Date {
+            Some(Date {
                 year: 2026,
                 month: 10,
                 day: 16
-            }
+            })
         );
         // Leap day.
         assert_eq!(
             Date::from_unix(951_782_400),
-            Date {
+            Some(Date {
                 year: 2000,
                 month: 2,
                 day: 29
-            }
+            })
         );
         // Before the epoch.
         assert_eq!(
             Date::from_unix(-86_400),
-            Date {
+            Some(Date {
                 year: 1969,
                 month: 12,
                 day: 31
-            }
+            })
         );
     }
 

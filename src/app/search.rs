@@ -128,7 +128,7 @@ impl App {
             }
             Err(e) => {
                 self.discover.loading = false;
-                self.error(format!("Couldn't load artist: {e}"));
+                self.error(format!("Couldn't load artist: {e}. Press esc to go back."));
                 self.discover.error = Some(e);
                 vec![]
             }

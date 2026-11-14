@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use super::{
-    Action, AlbumView, App, Effect, Focus, PlayerCommand, QUEUE_PREFETCH, Screen, UpNext, move_list,
+    Action, AlbumView, App, Effect, Focus, NO_AUDIO, PlayerCommand, QUEUE_PREFETCH, Screen,
+    UNPLAYABLE_HINT, UpNext, move_list,
 };
 use crate::bandcamp::{Album, ItemId};
 use crate::player::QueueTrack;
@@ -45,7 +46,9 @@ impl App {
                     .get(index)
                     .is_some_and(crate::bandcamp::Track::is_playable)
                 {
-                    self.error("That track isn't available for streaming.");
+                    self.error(format!(
+                        "That track isn't available for streaming. {UNPLAYABLE_HINT}"
+                    ));
                     return vec![];
                 }
                 QueueEntry::track(album, index)
@@ -56,7 +59,7 @@ impl App {
             return vec![];
         };
         if !self.player_available {
-            self.error("No audio output available.");
+            self.error(NO_AUDIO);
             return vec![];
         }
         // Nothing playing: there's no "after" to wait for, so start it now.
@@ -75,7 +78,7 @@ impl App {
         };
         if !added {
             self.error(format!(
-                "The queue is full ({} entries).",
+                "The queue is full ({} entries). Press u to remove some.",
                 crate::queue::MAX_ENTRIES
             ));
             return vec![];

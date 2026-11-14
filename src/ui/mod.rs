@@ -15,12 +15,13 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::symbols::border;
+use ratatui::symbols::merge::MergeStrategy;
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, Focus, ListSource, MessageKind, Screen};
-use crate::bandcamp::{Filters, Slice};
+use crate::app::{App, Focus, ListSource, MessageKind, PaneAreas, PopupAreas, Screen};
+use crate::bandcamp::Filters;
 use crate::config::Density;
 use crate::format;
 use crate::input::{HELP_HINTS, HINTS, LISTENING_HINTS, PICKER_HINTS, QUEUE_HINTS};
@@ -91,6 +92,9 @@ pub const MIN_HEIGHT: u16 = 12;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
+    // Only what this frame draws can be clicked.
+    app.pane_areas = PaneAreas::default();
+    app.popup_areas = PopupAreas::default();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         // Nothing shows a cover: don't download or encode one for a stale layout.
         app.album_pane.art_box = None;
@@ -113,16 +117,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     ])
     .areas(frame.area());
 
-    app.pane_areas = crate::app::PaneAreas::default();
     draw_header(frame, header, app, metrics);
     if app.screen == Screen::Listening {
         listening::draw(frame, body, app, metrics);
     } else if body.width >= TWO_PANE_MIN_WIDTH {
-        let [list, album] =
-            Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
-                .areas(body);
-        discover::draw(frame, list, app, metrics, discover::Album::Right);
-        album::draw(frame, album, app, metrics, false);
+        // Bordered panes share the column between them (borderless ones draw a divider).
+        let overlap = if metrics.borderless { 0 } else { -1 };
+        let [list, album] = Layout::horizontal([Constraint::Percentage(55), Constraint::Fill(1)])
+            .spacing(overlap)
+            .areas(body);
+        // The shared edge takes the style of the pane drawn last: make that the focused one.
+        if app.focus == Focus::Album {
+            discover::draw(frame, list, app, metrics, discover::Album::Right);
+            album::draw(frame, album, app, metrics, false);
+        } else {
+            album::draw(frame, album, app, metrics, false);
+            discover::draw(frame, list, app, metrics, discover::Album::Right);
+        }
     } else {
         match app.focus {
             Focus::Discover if app.peek && body.height >= PEEK_MIN_HEIGHT => {
@@ -141,16 +152,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     draw_footer(frame, footer, app, metrics);
     if let Some(picker) = app.picker.as_mut() {
-        picker::draw(frame, body, picker);
+        app.popup_areas = picker::draw(frame, body, picker);
     }
     if app.search_open {
-        search::draw(frame, body, &mut app.search);
+        app.popup_areas = search::draw(frame, body, &mut app.search);
     }
     if app.queue_view.is_some() {
-        queue::draw(frame, body, app);
+        app.popup_areas = queue::draw(frame, body, app);
     }
     if let Some(view) = app.help.as_mut() {
-        help::draw(frame, frame.area(), view);
+        app.popup_areas = help::draw(frame, frame.area(), view);
     }
 }
 
@@ -216,7 +227,7 @@ fn pane(title: &str, focused: bool, metrics: Metrics, divider: bool) -> Block<'s
             .border_set(set)
             .padding(Padding::new(1, right, 0, 0))
     } else {
-        Block::bordered()
+        Block::bordered().merge_borders(MergeStrategy::Exact)
     }
     .title(format!(" {title} "));
     if focused {
@@ -264,14 +275,6 @@ pub(super) fn title_by(title: &str, artist: &str, width: usize) -> Vec<Span<'sta
     spans
 }
 
-fn slice_label(slice: Slice) -> &'static str {
-    match slice {
-        Slice::Top => "best-selling",
-        Slice::New => "new arrivals",
-        Slice::Random => "surprise me",
-    }
-}
-
 /// Whether this frame shows the playing track in the header (and the filters in the list title).
 pub(super) fn track_in_header(app: &App, metrics: Metrics) -> bool {
     metrics.bar == Bar::InHeader && app.screen == Screen::Browse && app.current_track().is_some()
@@ -282,7 +285,7 @@ pub(super) fn source_parts(app: &App) -> (&'static str, Vec<String>) {
     match &app.source {
         ListSource::Discover => {
             let mut parts = crate::picker::describe(Filters::snapshot(), &app.query);
-            parts.insert(1, slice_label(app.query.slice).to_owned());
+            parts.insert(1, app.query.slice.label().to_owned());
             ("Discover", parts)
         }
         ListSource::Search(query) => ("Search", vec![format!("“{query}”")]),
@@ -408,7 +411,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, app: &App, metrics: Metrics) {
     let status_width = u16::try_from(status.width()).unwrap_or(u16::MAX);
     let [left, right] =
         Layout::horizontal([Constraint::Min(0), Constraint::Length(status_width)]).areas(area);
-    frame.render_widget(Paragraph::new(line), left);
+    frame.render_widget(fit(line, usize::from(left.width)), left);
     frame.render_widget(status, right);
 }
 
@@ -562,6 +565,16 @@ mod tests {
     }
 
     #[test]
+    fn a_message_too_long_for_the_footer_is_cut_visibly() {
+        let (mut app, _) = App::new(DiscoverQuery::default(), false);
+        let screen = render(&mut app, MIN_WIDTH, 12);
+        let footer = text_of(&screen).pop().unwrap();
+        assert_eq!(footer.width(), usize::from(MIN_WIDTH));
+        assert!(footer.starts_with(" No audio output; browsing only."));
+        assert!(footer.trim_end().ends_with('…'), "{footer:?}");
+    }
+
+    #[test]
     fn now_playing_bar_paused() {
         let mut app = app_with_page();
         app.now_playing = Some(Arc::from(fixture_album("album")));
@@ -651,9 +664,11 @@ mod tests {
             matches!(&effects[..], [Effect::SaveSettings(s)] if s.cover_hidden),
             "remembered: {effects:?}"
         );
+        assert_eq!(app.message.as_ref().unwrap().text, "Cover: hidden");
         render(&mut app, 120, 24);
         assert!(app.album_pane.art_box.is_none(), "hidden");
         app.update(Action::ToggleCover);
+        assert_eq!(app.message.as_ref().unwrap().text, "Cover: shown");
         render(&mut app, 120, 24);
         assert!(app.album_pane.art_box.is_some(), "shown again");
     }
@@ -853,6 +868,8 @@ mod tests {
         }
     }
 
+    const SKY_BLUE: Color = Color::Rgb(0x56, 0xb4, 0xe9);
+
     /// Every cell's colours, to check a theme end to end.
     fn colors(terminal: &Terminal<TestBackend>) -> Vec<Color> {
         terminal
@@ -871,7 +888,7 @@ mod tests {
         app.update(Action::Play);
         app.update(Action::Notice("hello".into()));
         theme::set(theme::DARK);
-        assert!(colors(&render(&mut app, 100, 24)).contains(&Color::Cyan));
+        assert!(colors(&render(&mut app, 100, 24)).contains(&SKY_BLUE));
 
         theme::set(theme::MONO);
         let mut screens = vec![render(&mut app, 100, 24)];
@@ -894,19 +911,23 @@ mod tests {
     }
 
     #[test]
-    fn light_theme_avoids_cyan_and_yellow() {
+    fn light_theme_avoids_the_pale_hues() {
         let mut app = app_with_page();
         show_album(&mut app, fixture_album("preorder"));
         app.update(Action::Play);
         theme::set(theme::LIGHT);
         let used = colors(&render(&mut app, 100, 24));
         theme::set(theme::DARK);
-        assert!(used.contains(&Color::Blue), "accent");
-        assert!(used.contains(&Color::Magenta), "the pre-order note");
+        assert!(used.contains(&Color::Rgb(0x00, 0x72, 0xb2)), "blue accent");
+        assert!(
+            used.contains(&Color::Rgb(0xd5, 0x5e, 0x00)),
+            "vermillion pre-order note"
+        );
+        // Sky blue and orange are about 2:1 on white.
         assert!(
             !used
                 .iter()
-                .any(|c| matches!(c, Color::Cyan | Color::Yellow)),
+                .any(|c| matches!(c, &SKY_BLUE | &Color::Rgb(0xe6, 0x9f, 0x00))),
             "{used:?}"
         );
     }
@@ -1012,10 +1033,88 @@ mod tests {
         app.update(click(list.x + 5, list.y - 1));
         assert_eq!(app.table.selected(), Some(2));
 
-        // Popups swallow clicks.
+        // A popup takes clicks, even over the list: this one closes it.
         app.update(Action::OpenSearch);
+        render(&mut app, 120, 24);
         app.update(click(list.x + 5, list.y));
         assert_eq!(app.table.selected(), Some(2));
+        assert!(!app.search_open);
+    }
+
+    #[test]
+    fn a_click_in_a_popup_selects_the_row_and_outside_closes_it() {
+        let click = |at: (u16, u16)| Action::Click {
+            column: at.0,
+            row: at.1,
+        };
+        // A cell on row `line` of the open popup's list, and one outside the popup.
+        let row = |app: &App, line: u16| {
+            let rows = app.popup_areas.rows;
+            assert!(line < rows.height, "{rows:?}");
+            (rows.x + 3, rows.y + line)
+        };
+        let outside = |app: &App| (0, app.popup_areas.frame.y);
+
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+
+        // The genre picker.
+        app.update(Action::OpenPicker(crate::picker::PickerKind::Genre));
+        render(&mut app, 120, 24);
+        app.update(click(row(&app, 2)));
+        assert_eq!(app.picker.as_ref().unwrap().list.selected(), Some(2));
+        // Inside, but on the input line: nothing.
+        let frame = app.popup_areas.frame;
+        app.update(click((frame.x + 2, frame.y + 1)));
+        assert_eq!(app.picker.as_ref().unwrap().list.selected(), Some(2));
+        app.update(click(outside(&app)));
+        assert!(app.picker.is_none(), "closed");
+        assert!(app.discover.items.len() > 2, "without choosing anything");
+
+        // Search results.
+        app.update(Action::OpenSearch);
+        let generation = match &app.update(Action::Edit(crate::text_input::Edit::Insert('a')))[..] {
+            [Effect::DebounceSearch(g)] => *g,
+            other => panic!("{other:?}"),
+        };
+        app.update(Action::SearchLoaded {
+            generation,
+            result: Ok(crate::bandcamp::parse_search(include_str!(
+                "../../tests/fixtures/search_aphex.json"
+            ))
+            .unwrap()),
+        });
+        render(&mut app, 120, 24);
+        app.update(click(row(&app, 1)));
+        assert_eq!(app.search.list.selected(), Some(1));
+        app.update(click(outside(&app)));
+        assert!(!app.search_open);
+
+        // The queue.
+        app.update(Action::Play);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        app.update(Action::Down);
+        app.update(Action::Enqueue);
+        app.update(Action::OpenQueue);
+        render(&mut app, 120, 24);
+        app.update(click(row(&app, 1)));
+        assert_eq!(app.queue_view.as_ref().unwrap().selected(), Some(1));
+        // Below the last entry: nothing.
+        let rows = app.popup_areas.rows;
+        app.update(click((rows.x + 3, rows.bottom() - 1)));
+        assert_eq!(app.queue_view.as_ref().unwrap().selected(), Some(1));
+        app.update(click(outside(&app)));
+        assert!(app.queue_view.is_none());
+
+        // Help: a click inside keeps it open, outside closes it.
+        app.update(Action::ShowHelp);
+        render(&mut app, 120, 24);
+        let frame = app.popup_areas.frame;
+        app.update(click((frame.x + 2, frame.y + 2)));
+        assert!(app.help.is_some());
+        app.update(click(outside(&app)));
+        assert!(app.help.is_none());
     }
 
     #[test]
@@ -1045,6 +1144,29 @@ mod tests {
             app.message.as_ref().unwrap().text,
             "Both panes are already showing."
         );
+    }
+
+    #[test]
+    fn two_panes_share_one_divider_in_the_focus_colour() {
+        let mut app = app_with_page();
+        show_album(&mut app, fixture_album("album"));
+        for focus in [Action::FocusDiscover, Action::FocusAlbum] {
+            app.update(focus);
+            let terminal = render(&mut app, 120, 24);
+            let lines = text_of(&terminal);
+            assert!(
+                lines[1].contains('┬') && !lines[1].contains("┐┌"),
+                "{}",
+                lines[1]
+            );
+            let bottom = lines.iter().rfind(|l| l.contains('┘')).unwrap();
+            assert!(bottom.contains('┴'), "{bottom}");
+            assert!(!lines.iter().any(|l| l.contains("││")), "{lines:#?}");
+            let x = u16::try_from(lines[1].chars().position(|c| c == '┬').unwrap()).unwrap();
+            let edge = &terminal.backend().buffer()[(x, 10)];
+            assert_eq!(edge.symbol(), "│");
+            assert_eq!(edge.fg, SKY_BLUE, "the shared edge shows focus");
+        }
     }
 
     #[test]

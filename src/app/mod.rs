@@ -52,6 +52,10 @@ const AUTOPLAY_MAX_SKIPS: u8 = 5;
 /// Fetch the next queue entry's details this long before the current release ends, so the
 /// switch only waits for the stream to start.
 const QUEUE_PREFETCH: std::time::Duration = std::time::Duration::from_secs(30);
+/// The player failed to open the audio device at startup; it's only retried on restart.
+const NO_AUDIO: &str = "No audio output. Check the sound device, then restart.";
+/// What to do about a release or track Bandcamp doesn't stream.
+const UNPLAYABLE_HINT: &str = "Press o to open it on bandcamp.com.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Action {
@@ -349,6 +353,15 @@ pub struct PaneAreas {
     pub track_rows: Rect,
 }
 
+/// Where the open popup was last drawn, so a click can pick a row or close it.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PopupAreas {
+    /// The whole popup, border included.
+    pub frame: Rect,
+    /// Its list's one-line rows: row `y` is item `offset + y`. Empty when no list shows.
+    pub rows: Rect,
+}
+
 /// State of the `?` help overlay.
 #[derive(Debug, Default)]
 pub struct HelpView {
@@ -420,6 +433,8 @@ pub struct App {
     pub album_pane: AlbumPane,
     /// Set while rendering.
     pub pane_areas: PaneAreas,
+    /// Set while rendering a popup.
+    pub popup_areas: PopupAreas,
     pub listening: ListeningPane,
     /// Open filter popup, if any. While open it gets all keys.
     pub picker: Option<Picker>,
@@ -498,6 +513,7 @@ impl App {
             density_chosen: false,
             album_pane: AlbumPane::default(),
             pane_areas: PaneAreas::default(),
+            popup_areas: PopupAreas::default(),
             listening: ListeningPane::default(),
             picker: None,
             albums: Lru::new(ALBUM_CACHE_SIZE),
@@ -531,7 +547,7 @@ impl App {
             help: None,
         };
         if !player_available {
-            app.error("No audio output available; browsing only.");
+            app.error("No audio output; browsing only. Check the sound device, then restart.");
         }
         let effects = vec![app.reload()];
         (app, effects)
@@ -664,6 +680,7 @@ impl App {
                     Slice::New => Slice::Random,
                     Slice::Random => Slice::Top,
                 };
+                self.info(format!("Sort: {}", self.query.slice.label()));
                 vec![self.reload(), self.save_settings()]
             }
             Action::OpenPicker(kind) => {
@@ -700,11 +717,7 @@ impl App {
     /// The wheel moves like ↑/↓ in whatever it's over: the open popup, the listening view's
     /// text, or the browse pane under the pointer, which it focuses so keys act there too.
     fn wheel(&mut self, down: bool, at: Position) -> Action {
-        let popup = self.help.is_some()
-            || self.picker.is_some()
-            || self.search_open
-            || self.queue_view.is_some();
-        if !popup && self.screen == Screen::Browse {
+        if !self.popup_open() && self.screen == Screen::Browse {
             if self.pane_areas.list.contains(at) {
                 self.focus = Focus::Discover;
             } else if self.pane_areas.album.contains(at) {
@@ -736,11 +749,17 @@ impl App {
     /// `C`: hide or show the album pane's cover, remembered.
     fn toggle_cover(&mut self) -> Vec<Effect> {
         self.cover_hidden = !self.cover_hidden;
+        // Without room for a cover, nothing on screen changes; say what `C` did.
+        self.info(if self.cover_hidden {
+            "Cover: hidden"
+        } else {
+            "Cover: shown"
+        });
         vec![self.save_settings()]
     }
 
-    /// Focuses the pane at `at` and selects the release or track there. Popups swallow clicks
-    /// before this; the listening view ignores them.
+    /// Focuses the pane at `at` and selects the release or track there. An open popup takes
+    /// clicks before this (see `popup_click`); the listening view ignores them.
     fn click(&mut self, at: Position) -> Vec<Effect> {
         if self.screen != Screen::Browse {
             return vec![];
@@ -772,8 +791,49 @@ impl App {
         vec![]
     }
 
+    fn popup_open(&self) -> bool {
+        self.help.is_some()
+            || self.picker.is_some()
+            || self.search_open
+            || self.queue_view.is_some()
+    }
+
+    /// A click while a popup is open: outside it closes the popup (like esc), on a list row it
+    /// selects that row (like moving there), anywhere else in it does nothing.
+    fn popup_click(&mut self, at: Position) {
+        let areas = self.popup_areas;
+        if !areas.frame.contains(at) {
+            let close = if self.help.is_some() {
+                Action::CloseHelp
+            } else {
+                Action::ClosePopup
+            };
+            self.popup_update(&close);
+            return;
+        }
+        // Help has no rows, so this also ends a click inside it.
+        if !areas.rows.contains(at) {
+            return;
+        }
+        let line = usize::from(at.y - areas.rows.y);
+        if let Some(picker) = self.picker.as_mut() {
+            let len = picker.visible_len();
+            select_row(&mut picker.list, len, line);
+        } else if self.search_open {
+            select_row(&mut self.search.list, self.search.results.len(), line);
+        } else if let Some(view) = self.queue_view.as_mut() {
+            select_row(view, self.queue.len(), line);
+        }
+    }
+
     /// The open popup handles `action` first; `None` means no popup took it.
     fn popup_update(&mut self, action: &Action) -> Option<Vec<Effect>> {
+        if let Action::Click { column, row } = *action
+            && self.popup_open()
+        {
+            self.popup_click(Position::new(column, row));
+            return Some(vec![]);
+        }
         if self.help.is_some() {
             return self.help_update(action);
         }
@@ -1016,6 +1076,14 @@ fn move_list(list: &mut ListState, len: usize, delta: isize) {
     if len > 0 {
         let current = list.selected().unwrap_or(0);
         list.select(Some(current.saturating_add_signed(delta).min(len - 1)));
+    }
+}
+
+/// Selects the item drawn on visible row `line` of a list, if there is one.
+fn select_row(list: &mut ListState, len: usize, line: usize) {
+    let index = list.offset() + line;
+    if index < len {
+        list.select(Some(index));
     }
 }
 

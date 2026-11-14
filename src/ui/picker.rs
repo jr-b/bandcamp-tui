@@ -7,9 +7,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 
 use super::theme::{self, theme};
+use crate::app::PopupAreas;
 use crate::picker::Picker;
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) -> PopupAreas {
     let width = area.width.saturating_sub(4).clamp(20, 56);
     let wanted_height = u16::try_from(picker.visible_len())
         .unwrap_or(u16::MAX)
@@ -54,12 +55,20 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, picker: &mut Picker) {
             ListItem::new(Line::from(spans))
         })
         .collect();
+    let no_rows = PopupAreas {
+        frame: popup,
+        rows: Rect::default(),
+    };
     if items.is_empty() {
         frame.render_widget(Line::from("No matches.").dim(), list);
-        return;
+        return no_rows;
     }
     let list_widget = List::new(items)
         .highlight_style(theme::SELECTED)
         .highlight_symbol("› ");
     frame.render_stateful_widget(list_widget, list, &mut picker.list);
+    PopupAreas {
+        rows: list,
+        ..no_rows
+    }
 }

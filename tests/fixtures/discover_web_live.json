@@ -1,0 +1,377 @@
+{
+  "results": [
+    {
+      "itemId": 3824699876,
+      "itemType": "a",
+      "resultType": "a",
+      "title": "16-Bit Adventure",
+      "itemUrl": "https://amynedd.bandcamp.com/album/16-bit-adventure?from=discover_page",
+      "primaryImage": {
+        "imageId": 1621207929,
+        "isArt": true
+      },
+      "addlImages": null,
+      "bandId": 2358276633,
+      "albumArtist": null,
+      "bandName": "Amynedd",
+      "bandUrl": "https://amynedd.bandcamp.com?from=discover_page",
+      "isFreeDownload": false,
+      "isSetPrice": false,
+      "price": {
+        "amount": 400,
+        "currency": "GBP",
+        "is_money": true
+      },
+      "bandGenreId": 10,
+      "bandLocation": "Birmingham, UK",
+      "isAlbumPreorder": false,
+      "releaseDate": "2020-10-21 11:33:41 UTC",
+      "trackCount": 12,
+      "duration": 1716.0,
+      "isWishlisted": null,
+      "isOwned": null,
+      "packageInfo": [
+        {
+          "packageId": 2848163170,
+          "format": "vinyl",
+          "isDigitalIncluded": true,
+          "imageId": 47887149,
+          "isPreorder": false,
+          "isSetPrice": false,
+          "typeId": 2,
+          "title": "Limited Edition Blue & White Splatter Vinyl",
+          "price": {
+            "amount": 2999,
+            "currency": "GBP",
+            "is_money": true
+          }
+        },
+        {
+          "packageId": 4022323235,
+          "format": "cd",
+          "isDigitalIncluded": true,
+          "imageId": 48110989,
+          "isPreorder": false,
+          "isSetPrice": false,
+          "typeId": 1,
+          "title": "Limited Edition Compact Disc",
+          "price": {
+            "amount": 1299,
+            "currency": "GBP",
+            "is_money": true
+          }
+        },
+        {
+          "packageId": 3903712616,
+          "format": "cassette",
+          "isDigitalIncluded": true,
+          "imageId": 47887202,
+          "isPreorder": false,
+          "isSetPrice": false,
+          "typeId": 3,
+          "title": "Limited Edition Cassette",
+          "price": {
+            "amount": 1399,
+            "currency": "GBP",
+            "is_money": true
+          }
+        }
+      ],
+      "bandImage": {
+        "imageId": 22087888,
+        "isArt": false
+      },
+      "isFollowingBand": null,
+      "playerData": {
+        "album": {
+          "id": 3824699876,
+          "title": "16-Bit Adventure",
+          "artId": 1621207929,
+          "bandId": 2358276633,
+          "isPreorder": false,
+          "isPurchasable": true,
+          "isFreeDownload": false,
+          "isSetPrice": false,
+          "price": {
+            "amount": 4.0,
+            "currency": "GBP",
+            "isMoney": true
+          },
+          "url": "https://amynedd.bandcamp.com/album/16-bit-adventure",
+          "isWishlisted": false,
+          "isOwned": false
+        },
+        "id": 2515425842,
+        "title": "Main Theme",
+        "bandId": 2358276633,
+        "sellingBandId": 2358276633,
+        "bandImageId": 22087888,
+        "artistName": "Amynedd",
+        "bandUrl": "https://amynedd.bandcamp.com",
+        "duration": 224.319,
+        "artId": 1621207929,
+        "isPreorder": false,
+        "isStreamingDisabled": false,
+        "isPurchasable": true,
+        "isFreeDownload": false,
+        "isSetPrice": false,
+        "price": {
+          "amount": 0.79,
+          "currency": "GBP",
+          "isMoney": true
+        },
+        "url": "https://amynedd.bandcamp.com/track/main-theme",
+        "streamUrl": "https://t4.bcbits.com/stream/redacted/mp3-128/0",
+        "isWishlisted": false,
+        "isOwned": false,
+        "playLimit": null,
+        "streamType": "i",
+        "timecode": null
+      }
+    },
+    {
+      "itemId": 3672267993,
+      "itemType": "a",
+      "resultType": "a",
+      "title": "COMPUTER METAL",
+      "itemUrl": "https://masterbootrecord.bandcamp.com/album/computer-metal?from=discover_page",
+      "primaryImage": {
+        "imageId": 2829643149,
+        "isArt": true
+      },
+      "addlImages": null,
+      "bandId": 3451636596,
+      "albumArtist": null,
+      "bandName": "MASTER BOOT RECORD",
+      "bandUrl": "https://masterbootrecord.bandcamp.com?from=discover_page",
+      "isFreeDownload": false,
+      "isSetPrice": false,
+      "price": {
+        "amount": 100,
+        "currency": "USD",
+        "is_money": true
+      },
+      "bandGenreId": 18,
+      "bandLocation": "Rome, Italy",
+      "isAlbumPreorder": false,
+      "releaseDate": "2026-10-30 00:00:00 UTC",
+      "trackCount": 10,
+      "duration": 2532.0,
+      "isWishlisted": null,
+      "isOwned": null,
+      "packageInfo": [
+        {
+          "packageId": 243718025,
+          "format": "vinyl",
+          "isDigitalIncluded": true,
+          "imageId": 48264188,
+          "isPreorder": false,
+          "isSetPrice": true,
+          "typeId": 2,
+          "title": "180g Black Vinyl - EU Stock",
+          "price": {
+            "amount": 2190,
+            "currency": "EUR",
+            "is_money": true
+          }
+        },
+        {
+          "packageId": 790799121,
+          "format": "vinyl",
+          "isDigitalIncluded": true,
+          "imageId": 48257101,
+          "isPreorder": false,
+          "isSetPrice": false,
+          "typeId": 2,
+          "title": "VINYL PRESSING (SHIPS FROM USA)",
+          "price": {
+            "amount": 2700,
+            "currency": "USD",
+            "is_money": true
+          }
+        },
+        {
+          "packageId": 858747069,
+          "format": "vinyl",
+          "isDigitalIncluded": true,
+          "imageId": 48264213,
+          "isPreorder": false,
+          "isSetPrice": true,
+          "typeId": 2,
+          "title": "A Side B Side Vinyl - EU Stock",
+          "price": {
+            "amount": 2690,
+            "currency": "EUR",
+            "is_money": true
+          }
+        },
+        {
+          "packageId": 1060890027,
+          "format": "cd",
+          "isDigitalIncluded": true,
+          "imageId": 48256996,
+          "isPreorder": false,
+          "isSetPrice": false,
+          "typeId": 1,
+          "title": "JEWEL CASE CD (SHIPS FROM USA)",
+          "price": {
+            "amount": 1200,
+            "currency": "USD",
+            "is_money": true
+          }
+        }
+      ],
+      "bandImage": {
+        "imageId": 8241950,
+        "isArt": false
+      },
+      "isFollowingBand": null,
+      "playerData": {
+        "album": {
+          "id": 3672267993,
+          "title": "COMPUTER METAL",
+          "artId": 2829643149,
+          "bandId": 3451636596,
+          "isPreorder": false,
+          "isPurchasable": true,
+          "isFreeDownload": false,
+          "isSetPrice": false,
+          "price": {
+            "amount": 1.0,
+            "currency": "USD",
+            "isMoney": true
+          },
+          "url": "https://masterbootrecord.bandcamp.com/album/computer-metal",
+          "isWishlisted": false,
+          "isOwned": false
+        },
+        "id": 3171744143,
+        "title": "COMMAND PROMPT",
+        "bandId": 3451636596,
+        "sellingBandId": 2130303334,
+        "bandImageId": 8241950,
+        "artistName": "MASTER BOOT RECORD",
+        "bandUrl": "https://masterbootrecord.bandcamp.com",
+        "duration": 333.077,
+        "artId": 2829643149,
+        "isPreorder": false,
+        "isStreamingDisabled": false,
+        "isPurchasable": true,
+        "isFreeDownload": false,
+        "isSetPrice": false,
+        "price": {
+          "amount": 1.5,
+          "currency": "USD",
+          "isMoney": true
+        },
+        "url": "https://masterbootrecord.bandcamp.com/track/command-prompt",
+        "streamUrl": "https://t4.bcbits.com/stream/redacted/mp3-128/0",
+        "isWishlisted": false,
+        "isOwned": false,
+        "playLimit": null,
+        "streamType": "i",
+        "timecode": null
+      }
+    },
+    {
+      "itemId": 3416391235,
+      "itemType": "a",
+      "resultType": "a",
+      "title": "WELTMACHT DIGITAL",
+      "itemUrl": "https://anthonyrother.bandcamp.com/album/weltmacht-digital?from=discover_page",
+      "primaryImage": {
+        "imageId": 907795590,
+        "isArt": true
+      },
+      "addlImages": null,
+      "bandId": 167389180,
+      "albumArtist": null,
+      "bandName": "Anthony Rother",
+      "bandUrl": "https://anthonyrother.bandcamp.com?from=discover_page",
+      "isFreeDownload": false,
+      "isSetPrice": false,
+      "price": {
+        "amount": 0,
+        "currency": "EUR",
+        "is_money": true
+      },
+      "bandGenreId": 10,
+      "bandLocation": "Offenbach, Germany",
+      "isAlbumPreorder": false,
+      "releaseDate": "2021-01-29 00:00:00 UTC",
+      "trackCount": 16,
+      "duration": 5938.0,
+      "isWishlisted": null,
+      "isOwned": null,
+      "packageInfo": [
+        {
+          "packageId": 391536286,
+          "format": "vinyl",
+          "isDigitalIncluded": true,
+          "imageId": 48346726,
+          "isPreorder": false,
+          "isSetPrice": false,
+          "typeId": 15,
+          "title": "2x12\" Vinyl + Digital Album",
+          "price": {
+            "amount": 3600,
+            "currency": "EUR",
+            "is_money": true
+          }
+        }
+      ],
+      "bandImage": {
+        "imageId": 17155066,
+        "isArt": false
+      },
+      "isFollowingBand": null,
+      "playerData": {
+        "album": {
+          "id": 3416391235,
+          "title": "WELTMACHT DIGITAL",
+          "artId": 907795590,
+          "bandId": 167389180,
+          "isPreorder": false,
+          "isPurchasable": true,
+          "isFreeDownload": false,
+          "isSetPrice": false,
+          "price": {
+            "amount": 0.0,
+            "currency": "EUR",
+            "isMoney": true
+          },
+          "url": "https://anthonyrother.bandcamp.com/album/weltmacht-digital",
+          "isWishlisted": false,
+          "isOwned": false
+        },
+        "id": 1903666264,
+        "title": "Grossmachtphantasie",
+        "bandId": 167389180,
+        "sellingBandId": 167389180,
+        "bandImageId": 17155066,
+        "artistName": "Anthony Rother",
+        "bandUrl": "https://anthonyrother.bandcamp.com",
+        "duration": 328.0,
+        "artId": 907795590,
+        "isPreorder": false,
+        "isStreamingDisabled": false,
+        "isPurchasable": false,
+        "isFreeDownload": false,
+        "isSetPrice": false,
+        "price": null,
+        "url": "https://anthonyrother.bandcamp.com/track/grossmachtphantasie",
+        "streamUrl": "https://t4.bcbits.com/stream/redacted/mp3-128/0",
+        "isWishlisted": false,
+        "isOwned": false,
+        "playLimit": null,
+        "streamType": "i",
+        "timecode": null
+      }
+    }
+  ],
+  "resultCount": 1963543,
+  "batchResultCount": 3,
+  "discoverSpecId": 60,
+  "isFollowingDiscoverSpec": null,
+  "cursor": "AoMIQubBo3DZ3be49wIrYTM0MTYzOTEyMzU="
+}

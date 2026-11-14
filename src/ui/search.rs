@@ -7,11 +7,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, List, ListItem};
 
 use super::theme::{self, theme};
-use crate::app::SearchBox;
+use crate::app::{PopupAreas, SearchBox};
 use crate::bandcamp::{SearchResult, TralbumKind};
 use crate::format;
 
-pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
+pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) -> PopupAreas {
     let width = area.width.saturating_sub(4).clamp(30, 72);
     let height = area.height.saturating_sub(2).clamp(6, 24);
     let [popup] = Layout::horizontal([Constraint::Length(width)])
@@ -44,13 +44,17 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
     .areas(inner);
     super::draw_input(frame, input, &search.query, "artist, album or track");
     frame.render_widget(Line::from("─".repeat(usize::from(rule.width))).dim(), rule);
+    let no_rows = PopupAreas {
+        frame: popup,
+        rows: Rect::default(),
+    };
 
     if let Some(error) = &search.error {
         frame.render_widget(
             Line::from(format!("Search failed: {error}")).patch_style(theme().error),
             list,
         );
-        return;
+        return no_rows;
     }
     if search.results.is_empty() {
         let hint = if search.query.as_str().trim().is_empty() {
@@ -61,7 +65,7 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
             "No matches."
         };
         frame.render_widget(Line::from(hint).dim(), list);
-        return;
+        return no_rows;
     }
 
     // Two-cell gap, a fixed-width type badge, then the name and who it's by.
@@ -75,6 +79,10 @@ pub(super) fn draw(frame: &mut Frame, area: Rect, search: &mut SearchBox) {
         .highlight_style(theme::SELECTED)
         .highlight_symbol("› ");
     frame.render_stateful_widget(widget, list, &mut search.list);
+    PopupAreas {
+        rows: list,
+        ..no_rows
+    }
 }
 
 fn result_line(result: &SearchResult, width: usize) -> Line<'static> {

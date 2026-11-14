@@ -165,6 +165,13 @@ impl From<Response> for Album {
                     .flatten(),
             })
             .collect();
+        let release_date = r.release_date.and_then(|secs| {
+            let date = Date::from_unix(secs);
+            if date.is_none() {
+                tracing::warn!(id = r.id, secs, "release date out of range; not shown");
+            }
+            date
+        });
 
         Self {
             id: ItemId(r.id),
@@ -183,7 +190,7 @@ impl From<Response> for Album {
             },
             url: r.bandcamp_url,
             art_id: r.art_id.map(ArtId),
-            release_date: r.release_date.map(Date::from_unix),
+            release_date,
             about: non_empty(r.about),
             credits: non_empty(r.credits),
             label: non_empty(r.label),
@@ -245,6 +252,16 @@ mod tests {
         let url = first.stream_url.as_ref().unwrap();
         assert_eq!(url.path(), "/stream_redirect");
         assert_eq!(album.duration().as_secs(), 2279);
+    }
+
+    #[test]
+    fn an_impossible_release_date_is_dropped_not_wrapped() {
+        // A garbage timestamp whose year doesn't fit an `i32`.
+        let json = include_str!("../../tests/fixtures/tralbum_album.json").replace(
+            "\"release_date\": 1792108800,",
+            &format!("\"release_date\": {},", i64::MAX),
+        );
+        assert_eq!(parse(&json).release_date, None);
     }
 
     #[test]

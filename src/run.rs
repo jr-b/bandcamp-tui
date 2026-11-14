@@ -326,7 +326,7 @@ impl Executor {
                     let client = self.client.clone();
                     let tx = self.results.clone();
                     tokio::spawn(async move {
-                        let result = client.search(&query).await.map_err(|e| error_chain(&e));
+                        let result = client.search(&query).await.map_err(|e| api_error(&e));
                         let _ = tx.send(Action::SearchLoaded { generation, result });
                     });
                 }
@@ -338,7 +338,7 @@ impl Executor {
                             .artist(band_id)
                             .await
                             .map(Box::new)
-                            .map_err(|e| error_chain(&e));
+                            .map_err(|e| api_error(&e));
                         let _ = tx.send(Action::ArtistLoaded { band_id, result });
                     });
                 }
@@ -353,7 +353,7 @@ impl Executor {
                         let result = client
                             .discover(&query, cursor.as_ref())
                             .await
-                            .map_err(|e| error_chain(&e));
+                            .map_err(|e| api_error(&e));
                         let _ = tx.send(Action::DiscoverLoaded { generation, result });
                     });
                 }
@@ -366,7 +366,7 @@ impl Executor {
                             .album(band_id, id, kind)
                             .await
                             .map(Box::new)
-                            .map_err(|e| error_chain(&e));
+                            .map_err(|e| api_error(&e));
                         let _ = tx.send(Action::AlbumLoaded { id, result });
                     });
                 }
@@ -413,6 +413,12 @@ impl Executor {
             }
         }
     }
+}
+
+/// The full error goes to the log; the app gets the line meant for the status bar.
+fn api_error(e: &crate::bandcamp::Error) -> String {
+    tracing::warn!(error = %error_chain(e), "bandcamp request failed");
+    e.user_message()
 }
 
 /// Downloads a cover's JPEG.
